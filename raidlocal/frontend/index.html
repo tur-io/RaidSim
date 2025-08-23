@@ -1,0 +1,25 @@
+<!doctype html><html><head>
+    <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>RaidLocal</title><link rel="stylesheet" href="/frontend/styles.css"/>
+    </head><body><div class="container">
+    <h1>RaidLocal</h1>
+    <section class="card">
+      <h2>Quick Sim</h2>
+      <textarea id="simcInput" placeholder="Paste /simc addon export or .simc profile here"></textarea>
+      <input id="extraArgs" placeholder="iterations=5000,threads=8"/>
+      <button id="runQuickSim">Run Quick Sim</button>
+      <div id="quickSimStatus" class="status"></div>
+      <div id="quickSimResult" class="result"></div>
+    </section>
+    <section class="card">
+      <h2>Top Gear (Profilesets)</h2>
+      <textarea id="baseProfile" placeholder="Base .simc"></textarea>
+      <textarea id="profilesets" placeholder='[{"name":"trinketA","overrides":["trinket1=id:12345"]}]'></textarea>
+      <input id="psExtraArgs" placeholder="iterations=10000,threads=8"/>
+      <button id="runTopGear">Run Profilesets</button>
+      <div id="psStatus" class="status"></div>
+      <div id="psResult" class="result"></div>
+    </section>
+    </div><script src="/frontend/app.js"></script></body></html>
+    
+
