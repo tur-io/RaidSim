@@ -1,0 +1,53 @@
+<!doctype html><html><head>
+    <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>RaidLocal</title><link rel="stylesheet" href="/frontend/styles.css"/>
+    </head><body><div class="container">
+    <h1>RaidLocal</h1>
+    <section class="card">
+      <h2>Quick Sim</h2>
+      <textarea id="simcInput" placeholder="Paste /simc addon export or .simc profile here"></textarea>
+      <input id="extraArgs" placeholder="iterations=5000,threads=8"/>
+      <button id="runQuickSim">Run Quick Sim</button>
+      <div id="quickSimStatus" class="status"></div>
+      <div id="quickSimResult" class="result"></div>
+    </section>
+    <section class="card">
+      <h2>Top Gear • Trinkets</h2>
+    
+      <label class="lbl">1) Paste SimC export</label>
+      <textarea id="tgSimc" placeholder="Paste your /simc export here"></textarea>
+    
+      <div class="row">
+        <label class="lbl" style="margin:0;">
+          <input type="checkbox" id="tgIncludeEquipped" checked />
+          include equipped trinkets
+        </label>
+        <button id="tgParse">Parse Trinkets</button>
+        <span id="tgParseStatus" class="status"></span>
+      </div>
+    
+      <div class="row">
+        <button id="tgSelectAll">Select All</button>
+        <button id="tgSelectNone">Select None</button>
+      </div>
+    
+      <div id="tgList" class="tg-list"></div>
+    
+      <label class="lbl">2) Base profile (optional; defaults to your same paste)</label>
+      <textarea id="tgBase" placeholder="Leave empty to use the same paste as base"></textarea>
+    
+      <label class="lbl">3) Extra args</label>
+      <input id="tgArgs" placeholder="iterations=1500,threads=2"/>
+    
+      <div class="row">
+        <button id="tgRunPairs">Run Best Pair (Selected)</button>
+        <button id="tgRunPairsAll">Auto Best Pair (All)</button>
+        <span id="tgRunStatus" class="status"></span>
+      </div>
+    
+      <div id="tgResult" class="result"></div>
+    </section>    
+    
+    </div><script src="/frontend/app.js"></script></body></html>
+    
+
