@@ -12,11 +12,9 @@
   <div class="container">
     <h1>RaidLocal</h1>
 
-    <!-- Quick Sim (unchanged) -->
+    <!-- Simulation Options -->
     <section class="card">
-      <h2>Quick Sim</h2>
-      <textarea id="simcInput" placeholder="Paste /simc addon export or .simc profile here"></textarea>
-      <input id="extraArgs" placeholder="iterations=5000,threads=8" />
+      <h2>Simulation Options</h2>
 
       <label class="lbl">Fight Style</label>
       <select id="fightStyle"></select>
@@ -26,6 +24,13 @@
 
       <label class="lbl">Fight Length</label>
       <select id="fightLength"></select>
+    </section>
+
+    <!-- Quick Sim (unchanged) -->
+    <section class="card">
+      <h2>Quick Sim</h2>
+      <textarea id="simcInput" placeholder="Paste /simc addon export or .simc profile here"></textarea>
+      <input id="extraArgs" placeholder="iterations=5000,threads=8" />
 
       <button id="runQuickSim">Run Quick Sim</button>
       <div id="quickSimStatus" class="status"></div>
