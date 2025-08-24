@@ -1,117 +1,603 @@
+// ---------- tiny fetch helper ----------
 async function postJSON(url, data){
-  const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(data)
+  });
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
 
+// ===== item meta cache (icons/names/tooltips) =====
+const ITEM_IMG_CDN = "https://wow.zamimg.com/images/wow/icons/large/";
+const PLACEHOLDER_ICON = ITEM_IMG_CDN + "inv_misc_questionmark.jpg";
+
+// in-memory cache: id -> { id, name, icon, unique_equipped, ... }
+window.__itemMeta = window.__itemMeta || {};
+function getItemMeta(id){ return id ? window.__itemMeta[id] : null; }
+function iconForItem(id){
+  const m = getItemMeta(id);
+  return m?.icon ? `${ITEM_IMG_CDN}${m.icon}.jpg` : PLACEHOLDER_ICON;
+}
+function isUniqueEquipped(id){
+  const m = getItemMeta(id);
+  return !!(m && m.unique_equipped);
+}
+
+function cleanFallbackLabel(s = "") {
+  // strip trailing _123456 id if present, turn underscores into spaces
+  return s.replace(/_\d{6}\b/, "").replace(/_/g, " ").trim();
+}
+
+function prettyItemNameById(id, fallback = "") {
+  const meta = getItemMeta(id);
+  if (meta?.name) return meta.name;           // best case
+  return cleanFallbackLabel(fallback) || (id ? `Item ${id}` : "Item");
+}
+
+// ===== rich item tooltip (uses Wowhead tooltip_html if present) =====
+let __tipEl = null;
+function ensureTip(){
+  if (__tipEl) return __tipEl;
+  const el = document.createElement("div");
+  el.id = "tgTooltip";
+  el.className = "tg-tooltip";
+  el.style.display = "none";
+  document.body.appendChild(el);
+  __tipEl = el;
+  return el;
+}
+function showItemTipAt(id, x, y){
+  const el = ensureTip();
+  const meta = getItemMeta(id) || {};
+  const name = meta.name || `Item ${id||""}`;
+  const body = meta.tooltip_html || "";
+  el.innerHTML = `<div class="tg-tooltip-inner">${body || name}</div>`;
+  el.style.display = "block";
+  positionTip(x, y);
+}
+function positionTip(x, y){
+  const el = ensureTip();
+  const pad = 12;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const rect = { w: el.offsetWidth, h: el.offsetHeight };
+  let left = x + pad, top = y + pad;
+  if (left + rect.w > vw - 6) left = Math.max(6, x - rect.w - pad);
+  if (top + rect.h > vh - 6) top = Math.max(6, y - rect.h - pad);
+  el.style.left = left + "px";
+  el.style.top = top + "px";
+}
+function hideItemTip(){ const el = ensureTip(); el.style.display = "none"; }
+
+function attachItemTooltips(){
+  const container = document.getElementById("tgResult");
+  if (!container) return;
+  // Remove any existing handlers by cloning
+  const clone = container.cloneNode(true);
+  container.parentNode.replaceChild(clone, container);
+  const root = clone;
+
+  root.addEventListener("mousemove", (e)=>{
+    const img = e.target.closest && e.target.closest("img.tg-item-icon");
+    if (!img) return;
+    const id = parseInt(img.getAttribute("data-item-id"), 10) || null;
+    if (!id) return;
+    // Warm meta if tooltip missing
+    const meta = getItemMeta(id);
+    if (!meta || !meta.tooltip_html){ warmItemMetaFromIds([id]).then(()=>{ showItemTipAt(id, e.clientX, e.clientY); }); }
+    showItemTipAt(id, e.clientX, e.clientY);
+  });
+  root.addEventListener("mouseleave", (e)=>{ hideItemTip(); });
+}
+
+function pairLabel(A, B) {
+  // A and B are { item_id, label }
+  const a = prettyItemNameById(A.item_id, A.label);
+  const b = prettyItemNameById(B.item_id, B.label);
+  return `${a} + ${b}`;
+}
+
+
+// Fetch icons/names for a list of trinkets (dedup by id), store in __itemMeta
+async function warmItemMetaFromTrinkets(trinkets){
+  const ids = [...new Set((trinkets || []).map(t => t.item_id).filter(Boolean))];
+  if (!ids.length) return false;
+
+  const res = await fetch(`/api/items?ids=${ids.join(",")}`);
+  if (!res.ok) return false;
+
+  const raw = await res.json();
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.value) ? raw.value : []);
+  list.forEach(m => { if (m?.id) window.__itemMeta[m.id] = m; });
+  return true;
+}
+
+function idsFromResultJson(json){
+  const rows = json?.sim?.profilesets?.results || json?.profilesets?.results || [];
+  const ids = new Set();
+  for (const r of rows) {
+    const name = r?.name || r?.profileset || r?.profile || "";
+    (name.match(/\b\d{6}\b/g) || []).forEach(s => ids.add(parseInt(s, 10)));
+    // Also catch ids embedded in trinket segments
+    (name.match(/trinket[12]_[^_]*_(\d{6})/g) || []).forEach(seg => {
+      const m = seg.match(/(\d{6})/);
+      if (m) ids.add(parseInt(m[1], 10));
+    });
+  }
+  return [...ids];
+}
+
+async function warmItemMetaFromIds(ids){
+  const want = ids.filter(id => !window.__itemMeta[id]);
+  if (!want.length) return;
+  const res = await fetch(`/api/items?ids=${want.join(",")}`);
+  if (!res.ok) return;
+  const raw = await res.json();
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw.value) ? raw.value : []);
+  list.forEach(m => { if (m?.id) window.__itemMeta[m.id] = m; });
+}
+
+async function warmItemMetaFromResult(json){
+  const ids = idsFromResultJson(json);
+  await warmItemMetaFromIds(ids);
+}
+
+// ------ saved state ------
+function saveState(){
+  try {
+    localStorage.setItem("tgSimc", document.getElementById("tgSimc").value);
+    localStorage.setItem("tgBase", document.getElementById("tgBase").value);
+    localStorage.setItem("tgArgs", document.getElementById("tgArgs").value);
+    localStorage.setItem("tgIncludeEquipped",
+      document.getElementById("tgIncludeEquipped").checked ? "1" : "0");
+  } catch {}
+}
+function loadState(){
+  try {
+    const g = k => localStorage.getItem(k);
+    if (g("tgSimc")) document.getElementById("tgSimc").value = g("tgSimc");
+    if (g("tgBase")) document.getElementById("tgBase").value = g("tgBase");
+    if (g("tgArgs")) document.getElementById("tgArgs").value = g("tgArgs");
+    const inc = g("tgIncludeEquipped");
+    if (inc!==null) document.getElementById("tgIncludeEquipped").checked = (inc==="1");
+  } catch {}
+}
+document.addEventListener("input", e=>{
+  if(["tgSimc","tgBase","tgArgs"].includes(e.target.id)) saveState();
+});
+document.getElementById("tgIncludeEquipped").addEventListener("change", saveState);
+document.addEventListener("DOMContentLoaded", loadState);
+
+// ---------- dom helpers ----------
 function val(id){ return document.getElementById(id).value; }
 function set(id, html){ document.getElementById(id).innerHTML = html; }
 function text(id, s){ document.getElementById(id).textContent = s; }
 
+// ---------- formatting ----------
+function fmtInt(n){ return Math.round(n).toLocaleString(); }
+function fmtDps(n){
+  if (n == null || Number.isNaN(n)) return "—";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(3) + "M";
+  return fmtInt(n);
+}
+function fmtDelta(n){
+  if (n == null || Number.isNaN(n)) return "—";
+  const s = Math.round(n);
+  return (s >= 0 ? "+" : "") + s.toLocaleString();
+}
+
+// =====================================================
+// ===============  Trinket picker  ====================
+// =====================================================
 function renderTrinkets(list){
   const el = document.getElementById("tgList");
-  if(!list.length){ el.innerHTML = "<div class='status'>No trinkets found.</div>"; return; }
+  if(!list.length){
+    el.innerHTML = "<div class='status'>No trinkets found.</div>";
+    return;
+  }
   el.innerHTML = "";
   list.forEach((t,i)=>{
     const row = document.createElement("div");
     row.className = "tg-item";
     row.dataset.index = i;
 
-    const icon = document.createElement("div"); icon.className = "tg-icon";
-    const name = document.createElement("div"); name.className = "tg-name";
-    name.textContent = (t.name || `trinket_${t.item_id || i}`).replace(/^trinket[12]_/, "");
+    const icon = document.createElement("div");
+    icon.className = "tg-icon";
+    icon.innerHTML = `<img src="${iconForItem(t.item_id)}" alt="">`;
 
-    const meta = document.createElement("div"); meta.className = "tg-slot badge";
-    meta.textContent = `${t.slot} • ${t.source}`;
+    const name = document.createElement("div");
+    name.className = "tg-name";
+    name.textContent = prettyItemNameById(t.item_id, (t.name || `trinket_${t.item_id || i}`).replace(/^trinket[12]_/, ""));
 
-    const sel = document.createElement("input"); sel.type = "checkbox"; sel.className = "tg-select"; sel.checked = true;
+
+    const meta = document.createElement("div");
+    meta.className = "tg-slot badge";
+    const uBadge = isUniqueEquipped(parseInt(t.item_id,10))
+      ? ` <span class="badge" title="Unique-Equipped — you can’t equip two copies">Unique</span>`
+      : "";
+    meta.innerHTML = `${t.slot} • ${t.source}${uBadge}`;
+
+    const sel = document.createElement("input");
+    sel.type = "checkbox";
+    sel.className = "tg-select";
+    sel.checked = true;
 
     row.append(icon, name, meta, sel);
     el.append(row);
   });
 }
 
-// Parse button
 document.getElementById("tgParse").onclick = async ()=>{
   const simc = val("tgSimc").trim();
   const includeEq = document.getElementById("tgIncludeEquipped").checked;
   const st = document.getElementById("tgParseStatus");
   st.textContent = "Parsing...";
   try{
-    const data = await postJSON("/api/parse-trinkets-all", { simc_input: simc, include_equipped: includeEq });
+    const data = await postJSON("/api/parse-trinkets-all", {
+      simc_input: simc,
+      include_equipped: includeEq
+    });
     window.__tgTrinkets = data.trinkets;
-    renderTrinkets(data.trinkets);
+
+    // Preload item meta so icons/names are available before rendering
+    await warmItemMetaFromTrinkets(window.__tgTrinkets);
+
+    renderTrinkets(window.__tgTrinkets);
     st.textContent = `Found ${data.trinkets.length} trinket(s)`;
   }catch(e){
     st.textContent = "Error: " + e.message;
   }
 };
-document.getElementById("tgSelectAll").onclick = ()=>{
-  document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = true);
-};
-document.getElementById("tgSelectNone").onclick = ()=>{
-  document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = false);
-};
 
-function renderRanking(resultJson){
-  const ps = resultJson?.sim?.profilesets?.results || resultJson?.profilesets?.results || [];
-  if(!Array.isArray(ps) || ps.length === 0){
-    return "<div class='status'>Profileset results not found in JSON (open the HTML report for the full table).</div>";
-  }
-  const base = baselineDpsFromJson(resultJson);
-  const rows = ps.map(r=>{
-    const name = r.name || r.profileset || r.profile || "set";
-    const dps  = (r.dps?.mean ?? r.collected_data?.dps?.mean ?? r.mean ?? null);
-    return { name, dps: (typeof dps === "number" ? dps : null) };
-  }).filter(x=>x.dps !== null);
-  rows.sort((a,b)=>b.dps - a.dps);
+document.getElementById("tgSelectAll").onclick =
+  ()=> document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = true);
+document.getElementById("tgSelectNone").onclick =
+  ()=> document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = false);
 
-  const top = rows[0];
-  const delta = (base!=null && top) ? (top.dps - base) : null;
-  const deltaStr = (delta!=null) ? ` (${delta>=0?"+":""}${delta.toFixed(0)} vs baseline)` : "";
-
-  let html = "";
-  if(top){
-    const equipTag = isEquippedPairName(top.name) ? " <span class='badge'>Equipped pair</span>" : "";
-    html += `<div class="badge">Best pair: <b>${top.name}</b> — ${top.dps.toFixed(2)} DPS${deltaStr}${equipTag}</div>`;
-  }
-
-  // top 10 table with deltas and equipped labels
-  const list = rows.slice(0,10).map(r=>{
-    const d = (base!=null) ? ` (${(r.dps-base>=0?"+":"")}${(r.dps-base).toFixed(0)})` : "";
-    const tag = isEquippedPairName(r.name) ? " [Equipped pair]" : "";
-    return { name: r.name+tag, dps: r.dps, delta: d };
-  });
-  html += "\n\n" + JSON.stringify(list, null, 2);
-  return `<pre>${html}</pre>`;
+// =====================================================
+// =================  Result helpers  ==================
+// =====================================================
+function sanitizeName(s){
+  return (s||"")
+    .replace(/[^A-Za-z0-9_]+/g,"_")
+    .replace(/_+/g,"_")
+    .replace(/^_+|_+$/g,"")
+    .slice(0,64) || "item";
+}
+function baselineDpsFromJson(j){
+  const p = (j?.sim?.players || j?.players || [])[0];
+  const m = p?.collected_data?.dps?.mean;
+  return (typeof m === "number") ? m : null;
+}
+function isEquippedPairName(name){
+  const eq = (window.__tgTrinkets||[])
+    .filter(t=>t.source==="equipped")
+    .map(t=>sanitizeName(t.name));
+  if(eq.length !== 2) return false;
+  const n = name || "";
+  return eq.every(x => n.includes(x));
 }
 
+// --- Robust partsFromProfilesetName ---
+// 0) If name is "T_<left>__<right>", try to match item names from parsed trinkets
+// 1) Otherwise: first-two-ids regex
+// 2) Otherwise: known-IDs scan
+// 3) Otherwise: sanitized-name contains
+function partsFromProfilesetName(name){
+  const all = window.__tgTrinkets || [];
+  const raw = (name || "");
+
+  // 0) Decode id-based naming: T_<idA>_VS_<idB>
+  let m = /^T_(\d{6})_VS_(\d{6})$/.exec(raw);
+  if (m){
+    const idA = parseInt(m[1], 10), idB = parseInt(m[2], 10);
+    const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
+    return [
+      { item_id: idA, label: metaA?.name || `Item ${idA}` },
+      { item_id: idB, label: metaB?.name || `Item ${idB}` }
+    ];
+  }
+
+  // 0a) Decode our previous naming: T_<left>_VS_<right> or legacy T_<left>__<right>
+  m = /^T_(.+?)_VS_(.+)$/.exec(raw) || /^T_(.+?)__(.+)$/.exec(raw);
+  if (m) {
+    const pick = (s) => {
+      const idMatch = (s.match(/\d{6}(?!.*\d)/) || [])[0];
+      const id = idMatch ? parseInt(idMatch, 10) : null;
+      const meta = id ? getItemMeta(id) : null;
+      return { item_id: id, label: meta?.name || cleanFallbackLabel(s) };
+    };
+    const A = pick(m[1]);
+    const B = pick(m[2]);
+    return [A, B];
+  }
+
+  // 0b) Generic SimC-like names containing two segments starting with trinket1_/trinket2_
+  // Example: "T_trinket1_Soulbreaker_s_Sigil_238390_trinket2_Equipped_242394"
+  {
+    const segs = (raw.match(/trinket[12]_[A-Za-z0-9_]+/g) || []);
+    if (segs.length >= 2) {
+      const pick = (s) => {
+        const idMatch = (s.match(/\d{6}(?!.*\d)/) || [])[0];
+        const id = idMatch ? parseInt(idMatch, 10) : null;
+        const meta = id ? getItemMeta(id) : null;
+        return { item_id: id, label: meta?.name || cleanFallbackLabel(s) };
+      };
+      return [pick(segs[0]), pick(segs[1])];
+    }
+  }
+
+  // 1) direct "first two unique 6-digit ids" in the whole string
+  const firstTwo = [...new Set((raw.match(/\b\d{6}\b/g) || []).map(x => parseInt(x,10)))].slice(0,2);
+  if (firstTwo.length === 2){
+    const [idA,idB] = firstTwo;
+    const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
+    return [
+      { item_id: idA, label: metaA?.name || `Item ${idA}` },
+      { item_id: idB, label: metaB?.name || `Item ${idB}` }
+    ];
+  }
+
+  // 2) scan with known IDs (from parsed trinkets + warmed meta)
+  const knownIds = new Set([
+    ...((all.map(t => t.item_id).filter(Boolean)) || []),
+    ...Object.keys(window.__itemMeta || {}).map(x => parseInt(x,10))
+  ]);
+  const found = [];
+  for (const id of knownIds){
+    if (raw.includes(String(id))){
+      found.push(id);
+      if (found.length === 2) break;
+    }
+  }
+  if (found.length === 2){
+    const [idA,idB] = found;
+    const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
+    return [
+      { item_id: idA, label: metaA?.name || `Item ${idA}` },
+      { item_id: idB, label: metaB?.name || `Item ${idB}` }
+    ];
+  }
+
+  // 3) fallback to sanitized-name matching
+  const hits = [];
+  for (const t of all) {
+    const sn = sanitizeName(t.name);
+    if (sn && raw.includes(sn)) hits.push({ item_id: t.item_id || null, label: t.name || "" });
+    if (hits.length === 2) break;
+  }
+  if (hits.length === 2) return hits;
+
+  return [{ item_id: null, label: "" }, { item_id: null, label: "" }];
+}
+
+
+// Build the Top-Gear-style table
+function buildTopGearTable(resultJson){
+  const profiles = resultJson?.sim?.profilesets?.results
+                || resultJson?.profilesets?.results || [];
+  const baseline = baselineDpsFromJson(resultJson);
+
+  // Normalize
+  const rowsRaw = profiles.map(p=>{
+    const name = p.name || p.profileset || p.profile || "set";
+    const dps  = (p.dps?.mean ?? p.collected_data?.dps?.mean ?? p.mean ?? null);
+    return {
+      name,
+      dps: (typeof dps === "number" ? dps : null),
+      items: partsFromProfilesetName(name),
+      isEquipped: isEquippedPairName(name)
+    };
+  }).filter(x => x.dps !== null);
+  
+  // De-duplicate by item-id pair (unordered) and drop same-id pairs defensively
+  const bestByPair = new Map();
+  for(const r of rowsRaw){
+    const [A,B] = r.items || [];
+    const idA = parseInt(A?.item_id, 10) || null;
+    const idB = parseInt(B?.item_id, 10) || null;
+    if (idA && idB && idA === idB) continue; // skip identical trinket pairs
+    const key = (idA && idB)
+      ? (idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`)
+      : sanitizeName(r.name);
+    const cur = bestByPair.get(key);
+    if (!cur || (r.dps > cur.dps)) bestByPair.set(key, r);
+  }
+  const rows = [...bestByPair.values()];
+
+  // Inject equipped as a ranked row instead of a fixed header, if we have baseline & ids
+  if (typeof baseline === "number"){
+    const eq = (window.__tgTrinkets||[]).filter(t=>t.source==="equipped");
+    const idA = parseInt(eq[0]?.item_id,10) || null;
+    const idB = parseInt(eq[1]?.item_id,10) || null;
+    if (idA && idB){
+      const equipKey = (idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`);
+      const findKey = (r)=>{
+        const a = parseInt(r?.items?.[0]?.item_id,10) || null;
+        const b = parseInt(r?.items?.[1]?.item_id,10) || null;
+        return (a && b) ? (a < b ? `${a}-${b}` : `${b}-${a}`) : null;
+      };
+      const idx = rows.findIndex(r => findKey(r) === equipKey);
+      if (idx >= 0){
+        rows[idx].isEquipped = true;
+        rows[idx]._equip = true;
+      } else {
+        const equipRow = {
+          name: `T_${idA}_VS_${idB}`,
+          dps: baseline,
+          items: [{ item_id:idA, label:"" }, { item_id:idB, label:"" }],
+          isEquipped: true,
+          _equip: true
+        };
+        rows.push(equipRow);
+      }
+    }
+  }
+  
+  // Sort (desc)
+  rows.sort((a,b)=>b.dps - a.dps);
+  if (rows.length) rows[0].isTop = true;
+
+  // ---- References / toggles
+  const refIsTop = document.getElementById("tgRefTop")?.checked || false;
+
+  // Reference number used for delta cells (equipped row or top)
+  const equippedRow = rows.find(r => r.isEquipped);
+  const ref = refIsTop ? (rows[0]?.dps ?? 0) : (equippedRow?.dps ?? baseline ?? 0);
+
+  // **Top DPS** (used for bar widths ONLY)
+  const topDps = rows.length ? rows[0].dps : (baseline ?? 0);
+
+  // Bar helper (always vs top DPS)
+  const bar = (val) => {
+    const pct = topDps ? Math.max(0, Math.min(100, (val / topDps) * 100)) : 0;
+    return `<div class="tg-bar"><div class="fill" style="width:${pct.toFixed(1)}%"></div></div>`;
+  };
+
+  // Header
+  let html = `
+    <div class="tg-row header">
+      <div class="tg-rank">#</div><div></div><div></div>
+      <div>Trinket Pair</div>
+      <div class="tg-dps">DPS</div>
+      <div class="tg-delta">Δ vs ${refIsTop ? "Top" : "Equipped"}</div>
+    </div>
+  `;
+
+  // Rows
+  rows.forEach((row, idx)=>{
+    const [A,B] = row.items;
+    const aMeta = getItemMeta(A.item_id);
+    const bMeta = getItemMeta(B.item_id);
+
+    const tag = row.isTop
+      ? `<span class="badge-top">Top Gear</span>`
+      : (row.isEquipped ? `<span class="badge-eq">Equipped</span>` : "");
+
+    const dpsCell = fmtDps(row.dps);
+
+    const delta = (ref ? (row.dps - ref) : null);
+    let deltaCell = "—";
+    if (delta!=null){
+      const pct = ref ? ((row.dps / ref - 1) * 100) : 0;
+      const sign = pct>=0 ? "+" : "";
+      deltaCell = `${fmtDelta(delta)} (${sign}${pct.toFixed(1)}%)`;
+    }
+    const dCls = (delta!=null) ? (delta>0 ? "delta-pos" : (delta<0 ? "delta-neg" : "")) : "";
+
+    const titleA = ((aMeta?.name||"") + (isUniqueEquipped(A.item_id)?' (Unique-Equipped)':'')).replace(/"/g,'&quot;');
+    const titleB = ((bMeta?.name||"") + (isUniqueEquipped(B.item_id)?' (Unique-Equipped)':'')).replace(/"/g,'&quot;');
+
+    const label = row.isEquipped ? `Current Gear — ${pairLabel(A,B)}` : pairLabel(A,B);
+    html += `
+      <div class="tg-row ${row.isTop ? "top" : ""} ${row.isEquipped ? "equipped" : ""}" ${row.isEquipped ? "id=\"row-equipped\"" : ""}>
+        <div class="tg-rank">${idx+1}</div>
+        <div class="tg-icon">${A.item_id?`<img class="tg-item-icon" data-item-id="${A.item_id}" src="${iconForItem(A.item_id)}" alt="" title="${titleA}">`:``}</div>
+        <div class="tg-icon">${B.item_id?`<img class="tg-item-icon" data-item-id="${B.item_id}" src="${iconForItem(B.item_id)}" alt="" title="${titleB}">`:``}</div>
+        <div class="tg-name" title="${label.replace(/"/g,'&quot;')}">
+          ${label} ${tag}
+        </div>
+        <div class="tg-dps">${dpsCell}${bar(row.dps)}</div>
+        <div class="tg-delta ${dCls}">${deltaCell}</div>
+      </div>
+    `;
+  });
+
+  return `<div class="tg-table">${html}</div>`;
+}
+
+// Rebind toggle controls to re-render the current results
+function attachTopGearControls(){
+  const rerender = ()=>{
+    if(window.__tgLast){
+      set("tgResult", buildTopGearTable(window.__tgLast));
+    }
+  };
+  ["tgRelDps","tgRefTop","tgRefEquipped"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.onchange = rerender;
+  });
+  const btn = document.getElementById("tgGoEquipped");
+  if(btn){
+    btn.onclick = ()=>{
+      const el = document.getElementById("row-equipped");
+      if(el) el.scrollIntoView({ behavior:"smooth", block:"center" });
+    };
+  }
+}
+
+// =====================================================
+// ===================  Run sims  ======================
+// =====================================================
 async function runPairs(items){
   const st = document.getElementById("tgRunStatus");
   const out = document.getElementById("tgResult");
   const base = (val("tgBase").trim() || val("tgSimc").trim());
   const extra = (val("tgArgs")||"").split(",").map(s=>s.trim()).filter(Boolean);
 
-  st.textContent = "Submitting...";
+  // Heads-up if user selected two copies of a unique-equipped item
+  try{
+    const all = window.__tgTrinkets || [];
+    const idByName = new Map(all.map(t => [t.name, parseInt(t.item_id,10) || null]));
+    const counts = new Map();
+    for (const sel of items){
+      const id = idByName.get(sel.name);
+      if (id && isUniqueEquipped(id)){
+        counts.set(id, (counts.get(id)||0) + 1);
+      }
+    }
+    const dupes = [...counts.entries()].filter(([,c]) => c > 1);
+    if (dupes.length){
+      st.textContent = "Note: duplicate Unique-Equipped items selected — those pairs will be skipped.";
+    }
+  }catch{ /* non-fatal */ }
+
+  st.textContent = st.textContent || "Submitting...";
   out.innerHTML = "";
 
-  const { job_id } = await postJSON("/api/top-gear-trinket-pairs", { base_profile: base, items, extra_args: extra });
+  const { job_id } = await postJSON("/api/top-gear-trinket-pairs", {
+    base_profile: base,
+    items,
+    extra_args: extra
+  });
 
   for(;;){
-    const r = await (await fetch(`/api/job/${job_id}`)).json();
-    st.textContent = `Status: ${r.status}`;
-    if(r.status === "finished"){
+    const jr = await (await fetch(`/api/job/${job_id}`)).json();
+    st.textContent = `Status: ${jr.status}`;
+
+    if(jr.status === "finished"){
+      window.__tgLast = jr.result?.json || {};
+
       let htmlLink = "";
-      if(r.result?.html_base64){
-        const blob = new Blob([atob(r.result.html_base64)], { type: "text/html" });
+      if(jr.result?.html_base64){
+        const blob = new Blob([atob(jr.result.html_base64)], { type: "text/html" });
         const url = URL.createObjectURL(blob);
-        htmlLink = `<a class="button" href="${url}" target="_blank" rel="noopener">Open HTML Report</a>`;
+        htmlLink = `<div style="padding:8px 0">
+          <a class="button" href="${url}" target="_blank" rel="noopener">Open HTML Report</a>
+        </div>`;
       }
-      const ranking = renderRanking(r.result?.json || {});
-      out.innerHTML = `${htmlLink}${ranking}`;
+
+      // ensure icons are ready for whatever pairs came out on top
+      await warmItemMetaFromTrinkets(window.__tgTrinkets || []);
+      // Also warm by scanning ids that appear only in the profileset names
+      const idsAll = new Set([
+        ...(idsFromResultJson(window.__tgLast) || []),
+        ...((window.__tgTrinkets || []).map(t => t.item_id).filter(Boolean))
+      ]);
+      await warmItemMetaFromIds([...idsAll]);
+
+      set("tgResult", htmlLink + buildTopGearTable(window.__tgLast));
+      attachItemTooltips();
+      attachTopGearControls();
       break;
     }
-    if(r.status === "failed"){ out.textContent = r.error || "Job failed"; break; }
+
+    if(jr.status === "failed"){
+      out.textContent = jr.error || "Job failed";
+      break;
+    }
+
     await new Promise(r => setTimeout(r, 1500));
   }
 }
@@ -122,54 +608,38 @@ document.getElementById("tgRunPairs").onclick = async ()=>{
   const selected = rows.map((row, idx)=>{
     if(!row.querySelector(".tg-select").checked) return null;
     const t = all[idx];
-    return { name: t.name, override: t.override };
+      const id = parseInt(t.item_id, 10) || null;
+      return {
+        name: t.name,
+        override: t.override,
+        item_id: id,
+        unique_equipped: isUniqueEquipped(id)
+      };
   }).filter(Boolean);
-  if(selected.length < 2){ document.getElementById("tgRunStatus").textContent = "Pick at least 2 trinkets."; return; }
+
+  if(selected.length < 2){
+    document.getElementById("tgRunStatus").textContent = "Pick at least 2 trinkets.";
+    return;
+  }
   await runPairs(selected);
 };
 
 document.getElementById("tgRunPairsAll").onclick = async ()=>{
   const all = (window.__tgTrinkets || []);
-  if(all.length < 2){ document.getElementById("tgRunStatus").textContent = "Need at least 2 trinkets."; return; }
-  // use *all* parsed trinkets regardless of UI selection
-  await runPairs(all.map(t => ({ name: t.name, override: t.override })));
+  if(all.length < 2){
+    document.getElementById("tgRunStatus").textContent = "Need at least 2 trinkets.";
+    return;
+  }
+  await runPairs(all.map(t => {
+    const id = parseInt(t.item_id, 10) || null;
+    return {
+      name: t.name,
+      override: t.override,
+      item_id: id,
+      unique_equipped: isUniqueEquipped(id)
+     };
+  }));
 };
 
-function sanitizeName(s){
-  return (s||"").replace(/[^A-Za-z0-9_]+/g,"_").replace(/_+/g,"_").replace(/^_+|_+$/g,"").slice(0,64) || "item";
-}
-
-function baselineDpsFromJson(j){
-  const p = (j?.sim?.players || j?.players || [])[0];
-  const m = p?.collected_data?.dps?.mean;
-  return (typeof m === "number") ? m : null;
-}
-function equippedNameParts(){
-  const eq = (window.__tgTrinkets||[]).filter(t=>t.source==="equipped").map(t=>sanitizeName(t.name));
-  return eq.length === 2 ? eq : null;
-}
-function isEquippedPairName(name){
-  const eq = equippedNameParts();
-  if(!eq) return false;
-  const n = name || "";
-  return eq.every(x => n.includes(x));
-}
-
-
-function verdictAgainstEquipped(topProfilesetName){
-  const all = window.__tgTrinkets || [];
-  const eq = all.filter(t => t.source === "equipped");
-  if (eq.length < 2) return "";
-  const a = sanitizeName(eq[0].name), b = sanitizeName(eq[1].name);
-  const n = topProfilesetName || "";
-  const alreadyBest = (n.includes(a) && n.includes(b));
-  return alreadyBest
-    ? "✅ You’re already using the best trinket pair."
-    : "👉 Recommendation: equip the two trinkets shown in the Best pair line above.";
-}
-
-// …inside the `if (r.status === "finished")` block after you compute `ranking`…
-const topName = (r.result?.json?.sim?.profilesets?.results?.[0]?.name)
-             || (r.result?.json?.profilesets?.results?.[0]?.name) || "";
-const verdict = verdictAgainstEquipped(topName);
-out.innerHTML = `${htmlLink}${ranking}${verdict ? `<div class="badge" style="margin-top:8px">${verdict}</div>` : ""}`;
+// Optional: ensure controls are bound if toggled before first sim
+document.addEventListener("DOMContentLoaded", attachTopGearControls);

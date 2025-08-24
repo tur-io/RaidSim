@@ -22,5 +22,77 @@ a.button{display:inline-block;margin:6px 0;color:#93c5fd}
 .tg-lock{cursor:pointer;user-select:none}
 .tg-select{transform:scale(1.25)}
 .badge{background:#0e1a2a;border:1px solid #27405f;border-radius:999px;padding:2px 8px;font-size:12px;color:#9fc3ff}
+/* === Top Gear table + controls === */
+.tg-controls{align-items:center}
+.tg-controls .spacer{flex:1}
+.switch{display:flex;gap:6px;align-items:center;margin:0 6px;color:#b9c7d8;font-size:13px}
+.ghost{background:transparent;border:1px solid #314357;color:#b9c7d8}
 
+/* Result table shell */
+.tg-table{border:1px solid #263241;border-radius:12px;overflow:hidden;margin-top:8px}
+.tg-row{display:grid;grid-template-columns:30px 30px 1fr 150px 140px;gap:10px;align-items:center;padding:10px 12px}
+.tg-row.header{background:#0e1520;color:#a6bed6;font-weight:600}
+.tg-row + .tg-row{border-top:1px solid #1d2938}
+.tg-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tg-dps,.tg-delta{text-align:right;font-variant-numeric:tabular-nums}
+.tg-dps{font-weight:700}
+.delta-pos{color:#22c55e}      /* positive (green) */
+.delta-neg{color:#ef4444}      /* negative (red) */
+.badge-eq{font-size:11px;background:#0f1c21;border:1px solid #1f3a3f;color:#7fe6cc;border-radius:999px;padding:1px 6px;margin-left:6px}
+.badge-top{font-size:11px;background:#211019;border:1px solid #4e2233;color:#ff9db2;border-radius:999px;padding:1px 6px;margin-left:6px}
+.tg-row.equipped{background:linear-gradient(90deg, rgba(122,76,13,.22), rgba(122,76,13,0.02))}
+.tg-row.equipped .tg-name{font-weight:700}
+.tg-row.top{background:linear-gradient(90deg, rgba(24,85,34,.22), rgba(24,85,34,0.02))}
 
+/* Improve trinket icons (reusing your .tg-icon) */
+.tg-icon{width:30px;height:30px;border-radius:6px;background:#202a36;box-shadow:inset 0 0 0 1px #35455a}
+.tg-icon img{width:100%;height:100%;display:block;border-radius:6px}
+
+/* rank + bar */
+.tg-rank{width:36px;text-align:right;opacity:.7;font-variant-numeric:tabular-nums}
+.tg-row { grid-template-columns:36px 30px 30px 1fr 160px 140px; } /* add rank col */
+.tg-row.header { grid-template-columns:36px 30px 30px 1fr 160px 140px; }
+
+.tg-bar{
+  position:relative;
+  height:8px;
+  background:#152031;           /* track */
+  border-radius:999px;
+  overflow:hidden;
+}
+.tg-bar .fill{
+  position:absolute;
+  left:0; top:0; bottom:0;
+  width:0;                      /* set from JS */
+  background:#2563eb;           /* solid portion = your pair’s DPS */
+  opacity:.9;
+  transition:width .25s ease;
+}
+.tg-bar .tail{
+  position:absolute;
+  top:0; bottom:0; right:0;
+  left:var(--fill, 0%);         /* start where solid fill ends */
+  background:linear-gradient(
+    to right,
+    rgba(37, 99, 235, .65),
+    rgba(37, 99, 235, .12) 65%,
+    rgba(37, 99, 235, 0) 100%
+  );                            /* fades toward 100% (Top) */
+  pointer-events:none;
+}
+
+.tg-icon img{
+  width: 30px; height: 30px; display:block; border-radius:6px; object-fit: cover;
+}
+
+.badge-uniq{
+  background:#2a1b0a;
+  border:1px solid #8a5a1b;
+  color:#ffc78a;
+  margin-left:6px;
+}
+
+/* --- tooltip --- */
+.tg-tooltip{position:fixed;z-index:9999;max-width:360px;background:#12161f;border:1px solid #2a3242;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.4);color:#cfd7e6;font-size:13px;line-height:1.3;padding:0}
+.tg-tooltip-inner{padding:10px}
+.tg-tooltip .q{color:#ffd100}

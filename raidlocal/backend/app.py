@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional
+from .item_parser import router as items_router
 
 from backend.queue_utils import get_queue
 from backend import simc_runner
@@ -100,3 +101,5 @@ def job_status(job_id: str):
     if job.is_failed:
         return {"status":"failed","error":str(job.exc_info)}
     return {"status": job.get_status()}
+
+app.include_router(items_router)
