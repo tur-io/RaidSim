@@ -1,16 +1,66 @@
+// ---------- tiny fetch helper ----------
 async function postJSON(url, data){
-  const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(data)
+  });
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
 
+//------savedstate------
+function saveState(){
+  try {
+    localStorage.setItem("tgSimc", document.getElementById("tgSimc").value);
+    localStorage.setItem("tgBase", document.getElementById("tgBase").value);
+    localStorage.setItem("tgArgs", document.getElementById("tgArgs").value);
+    localStorage.setItem("tgIncludeEquipped", document.getElementById("tgIncludeEquipped").checked ? "1":"0");
+  } catch {}
+}
+function loadState(){
+  try {
+    const g = k => localStorage.getItem(k);
+    if (g("tgSimc")) document.getElementById("tgSimc").value = g("tgSimc");
+    if (g("tgBase")) document.getElementById("tgBase").value = g("tgBase");
+    if (g("tgArgs")) document.getElementById("tgArgs").value = g("tgArgs");
+    const inc = g("tgIncludeEquipped");
+    if (inc!==null) document.getElementById("tgIncludeEquipped").checked = (inc==="1");
+  } catch {}
+}
+document.addEventListener("input", e=>{
+  if(["tgSimc","tgBase","tgArgs"].includes(e.target.id)) saveState();
+});
+document.getElementById("tgIncludeEquipped").addEventListener("change", saveState);
+document.addEventListener("DOMContentLoaded", loadState);
+
+// ---------- dom helpers ----------
 function val(id){ return document.getElementById(id).value; }
 function set(id, html){ document.getElementById(id).innerHTML = html; }
 function text(id, s){ document.getElementById(id).textContent = s; }
 
+// ---------- formatting ----------
+function fmtInt(n){ return Math.round(n).toLocaleString(); }
+function fmtDps(n){
+  if (n == null || Number.isNaN(n)) return "—";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(3) + "M";
+  return fmtInt(n);
+}
+function fmtDelta(n){
+  if (n == null || Number.isNaN(n)) return "—";
+  const s = Math.round(n);
+  return (s >= 0 ? "+" : "") + s.toLocaleString();
+}
+
+// =====================================================
+// ===============  Trinket picker  ====================
+// =====================================================
 function renderTrinkets(list){
   const el = document.getElementById("tgList");
-  if(!list.length){ el.innerHTML = "<div class='status'>No trinkets found.</div>"; return; }
+  if(!list.length){
+    el.innerHTML = "<div class='status'>No trinkets found.</div>";
+    return;
+  }
   el.innerHTML = "";
   list.forEach((t,i)=>{
     const row = document.createElement("div");
@@ -31,14 +81,16 @@ function renderTrinkets(list){
   });
 }
 
-// Parse button
 document.getElementById("tgParse").onclick = async ()=>{
   const simc = val("tgSimc").trim();
   const includeEq = document.getElementById("tgIncludeEquipped").checked;
   const st = document.getElementById("tgParseStatus");
   st.textContent = "Parsing...";
   try{
-    const data = await postJSON("/api/parse-trinkets-all", { simc_input: simc, include_equipped: includeEq });
+    const data = await postJSON("/api/parse-trinkets-all", {
+      simc_input: simc,
+      include_equipped: includeEq
+    });
     window.__tgTrinkets = data.trinkets;
     renderTrinkets(data.trinkets);
     st.textContent = `Found ${data.trinkets.length} trinket(s)`;
@@ -46,46 +98,214 @@ document.getElementById("tgParse").onclick = async ()=>{
     st.textContent = "Error: " + e.message;
   }
 };
-document.getElementById("tgSelectAll").onclick = ()=>{
-  document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = true);
-};
-document.getElementById("tgSelectNone").onclick = ()=>{
-  document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = false);
-};
 
-function renderRanking(resultJson){
-  const ps = resultJson?.sim?.profilesets?.results || resultJson?.profilesets?.results || [];
-  if(!Array.isArray(ps) || ps.length === 0){
-    return "<div class='status'>Profileset results not found in JSON (open the HTML report for the full table).</div>";
-  }
-  const base = baselineDpsFromJson(resultJson);
-  const rows = ps.map(r=>{
-    const name = r.name || r.profileset || r.profile || "set";
-    const dps  = (r.dps?.mean ?? r.collected_data?.dps?.mean ?? r.mean ?? null);
-    return { name, dps: (typeof dps === "number" ? dps : null) };
-  }).filter(x=>x.dps !== null);
-  rows.sort((a,b)=>b.dps - a.dps);
+document.getElementById("tgSelectAll").onclick =
+  ()=> document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = true);
+document.getElementById("tgSelectNone").onclick =
+  ()=> document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = false);
 
-  const top = rows[0];
-  const delta = (base!=null && top) ? (top.dps - base) : null;
-  const deltaStr = (delta!=null) ? ` (${delta>=0?"+":""}${delta.toFixed(0)} vs baseline)` : "";
-
-  let html = "";
-  if(top){
-    const equipTag = isEquippedPairName(top.name) ? " <span class='badge'>Equipped pair</span>" : "";
-    html += `<div class="badge">Best pair: <b>${top.name}</b> — ${top.dps.toFixed(2)} DPS${deltaStr}${equipTag}</div>`;
-  }
-
-  // top 10 table with deltas and equipped labels
-  const list = rows.slice(0,10).map(r=>{
-    const d = (base!=null) ? ` (${(r.dps-base>=0?"+":"")}${(r.dps-base).toFixed(0)})` : "";
-    const tag = isEquippedPairName(r.name) ? " [Equipped pair]" : "";
-    return { name: r.name+tag, dps: r.dps, delta: d };
-  });
-  html += "\n\n" + JSON.stringify(list, null, 2);
-  return `<pre>${html}</pre>`;
+// =====================================================
+// =================  Result helpers  ==================
+// =====================================================
+function sanitizeName(s){
+  return (s||"")
+    .replace(/[^A-Za-z0-9_]+/g,"_")
+    .replace(/_+/g,"_")
+    .replace(/^_+|_+$/g,"")
+    .slice(0,64) || "item";
+}
+function baselineDpsFromJson(j){
+  const p = (j?.sim?.players || j?.players || [])[0];
+  const m = p?.collected_data?.dps?.mean;
+  return (typeof m === "number") ? m : null;
+}
+function isEquippedPairName(name){
+  const eq = (window.__tgTrinkets||[])
+    .filter(t=>t.source==="equipped")
+    .map(t=>sanitizeName(t.name));
+  if(eq.length !== 2) return false;
+  const n = name || "";
+  return eq.every(x => n.includes(x));
+}
+function iconForItem(/* itemId */){
+  // Placeholder; swap to a real CDN when you have an itemId->iconName map
+  return "https://wow.zamimg.com/images/wow/icons/large/inv_misc_questionmark.jpg";
+}
+function partsFromProfilesetName(name){
+  // We name pairs as T_<A>__<B>
+  const n = (name||"").replace(/^T_/,"");
+  const [a,b] = n.split("__");
+  const all = window.__tgTrinkets || [];
+  const find = (needle)=>{
+    const sn = sanitizeName(needle||"");
+    const hit = all.find(t => sanitizeName(t.name) === sn);
+    return { item_id: hit?.item_id || null, label: needle || "" };
+  };
+  return [find(a), find(b)];
 }
 
+// Build the Top-Gear-style table
+function buildTopGearTable(resultJson){
+  // 1) Get profileset results safely
+  const profiles = resultJson?.sim?.profilesets?.results
+                || resultJson?.profilesets?.results || [];
+  if (!Array.isArray(profiles) || profiles.length === 0) {
+    return `<div class="status">No profileset results found in JSON (open HTML report to verify).</div>`;
+  }
+
+  // 2) Baseline DPS (equipped profile)
+  const p0 = (resultJson?.sim?.players || resultJson?.players || [])[0];
+  const baseline = Number(
+    p0?.collected_data?.dps?.mean ??
+    p0?.dps?.mean ??
+    p0?.mean ??
+    NaN
+  );
+
+  // 3) Normalize rows (extract DPS robustly)
+  const rows = profiles.map(p => {
+    const name = p.name || p.profileset || p.profile || "set";
+    const dps = Number(
+      p.dps?.mean ??
+      p.collected_data?.dps?.mean ??
+      p.mean ??
+      p.dps ??           // some builds expose raw DPS here
+      p.DPS ??           // super fallback
+      NaN
+    );
+    return {
+      name,
+      dps,
+      items: partsFromProfilesetName(name),
+      isEquipped: isEquippedPairName(name)
+    };
+  }).filter(r => Number.isFinite(r.dps) && r.dps > 0);
+
+  if (rows.length === 0) {
+    return `<div class="status">Could not read DPS from profilesets (got NaN). Check JSON structure.</div>`;
+  }
+
+  // 4) Sort & mark top
+  rows.sort((a,b) => b.dps - a.dps);
+  rows[0].isTop = true;
+
+  // 5) Define topDps ONCE and use everywhere
+  const topDps = rows[0]?.dps || 0;
+
+  // 6) Reference mode for labels (not for bar width)
+  const refIsTop = document.getElementById("tgRefTop")?.checked || false;
+  const relative = document.getElementById("tgRelDps")?.checked || false;
+  const ref = refIsTop ? (rows[0]?.dps ?? baseline) : baseline;
+
+  // header
+  let html = `
+    <div class="tg-row header">
+      <div class="tg-rank">#</div><div></div><div></div>
+      <div>Trinket Pair</div>
+      <div class="tg-dps">${relative ? "Rel DPS" : "DPS"}</div>
+      <div class="tg-delta">Δ vs ${refIsTop ? "Top" : "Equipped"}</div>
+    </div>
+  `;
+
+  // 7) Equipped baseline row
+  if (Number.isFinite(baseline) && baseline > 0) {
+    const eq = (window.__tgTrinkets||[]).filter(t => t.source === "equipped");
+    const [t1,t2] = [eq[0]?.item_id, eq[1]?.item_id];
+
+    const pctEqTrue = topDps ? (baseline / topDps * 100) : 0;
+    // optional contrast boost (map 90–100 → 0–100 visually)
+    const pctEqVis  = Math.max(0, Math.min(100, (pctEqTrue - 90) * 10));
+
+    const label = relative && Number.isFinite(ref) && ref > 0
+      ? (baseline/ref*100).toFixed(1) + "%"
+      : fmtDps(baseline);
+
+    html += `
+      <div class="tg-row equipped" id="row-equipped">
+        <div class="tg-rank"></div>
+        <div class="tg-icon">${t1?`<img src="${iconForItem(t1)}" alt="">`:``}</div>
+        <div class="tg-icon">${t2?`<img src="${iconForItem(t2)}" alt="">`:``}</div>
+        <div class="tg-name">Current Gear <span class="badge-eq">Equipped</span></div>
+        <div class="tg-dps">
+          ${label}
+          <div class="tg-bar" style="--fill:${(pctEqVis).toFixed(1)}%">
+            <div class="fill" style="width:${(pctEqVis).toFixed(1)}%"></div>
+            <div class="tail"></div>
+          </div>
+        </div>
+        <div class="tg-delta">—</div>
+      </div>
+    `;
+  }
+
+  // 8) Each profileset row
+  rows.forEach((row, idx) => {
+    const refSafe = (Number.isFinite(ref) && ref > 0) ? ref : null;
+    const delta   = (refSafe != null) ? (row.dps - refSafe) : null;
+
+    const [A,B] = row.items;
+    const tag = row.isTop ? `<span class="badge-top">Top Gear</span>`
+                          : (row.isEquipped ? `<span class="badge-eq">Equipped pair</span>` : "");
+
+    const dpsCell = (relative && refSafe)
+      ? (row.dps / refSafe * 100).toFixed(1) + "%"
+      : fmtDps(row.dps);
+
+    const deltaCell = (relative && refSafe)
+      ? (row.dps / refSafe * 100).toFixed(1) + "%"
+      : fmtDelta(delta);
+
+    const dCls = (delta!=null) ? (delta>=0 ? "delta-pos" : "delta-neg") : "";
+
+    // bar width = % of TOP (100% = best pair)
+    const pctTopTrue = topDps ? (row.dps / topDps * 100) : 0;
+    const pctTopVis  = Math.max(0, Math.min(100, (pctTopTrue - 90) * 10)); // comment out if you don't want boosting
+
+    html += `
+      <div class="tg-row ${row.isTop ? "top" : ""}">
+        <div class="tg-rank">${idx+1}</div>
+        <div class="tg-icon">${A.item_id?`<img src="${iconForItem(A.item_id)}" alt="">`:``}</div>
+        <div class="tg-icon">${B.item_id?`<img src="${iconForItem(B.item_id)}" alt="">`:``}</div>
+        <div class="tg-name">${row.name} ${tag}</div>
+        <div class="tg-dps">
+          ${dpsCell}
+          <div class="tg-bar" style="--fill:${pctTopVis.toFixed(1)}%">
+            <div class="fill" style="width:${pctTopVis.toFixed(1)}%"></div>
+            <div class="tail"></div>
+          </div>
+        </div>
+        <div class="tg-delta ${dCls}">${deltaCell}</div>
+      </div>
+    `;
+  });
+
+  return `<div class="tg-table">${html}</div>`;
+}
+
+
+// Rebind toggle controls to re-render the current results
+function attachTopGearControls(){
+  const rerender = ()=>{
+    if(window.__tgLast){
+      set("tgResult", buildTopGearTable(window.__tgLast));
+    }
+  };
+  ["tgRelDps","tgRefTop","tgRefEquipped"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.onchange = rerender;
+  });
+  const btn = document.getElementById("tgGoEquipped");
+  if(btn){
+    btn.onclick = ()=>{
+      const el = document.getElementById("row-equipped");
+      if(el) el.scrollIntoView({ behavior:"smooth", block:"center" });
+    };
+  }
+}
+
+// =====================================================
+// ===================  Run sims  ======================
+// =====================================================
 async function runPairs(items){
   const st = document.getElementById("tgRunStatus");
   const out = document.getElementById("tgResult");
@@ -95,23 +315,37 @@ async function runPairs(items){
   st.textContent = "Submitting...";
   out.innerHTML = "";
 
-  const { job_id } = await postJSON("/api/top-gear-trinket-pairs", { base_profile: base, items, extra_args: extra });
+  const { job_id } = await postJSON("/api/top-gear-trinket-pairs", {
+    base_profile: base,
+    items,
+    extra_args: extra
+  });
 
   for(;;){
-    const r = await (await fetch(`/api/job/${job_id}`)).json();
-    st.textContent = `Status: ${r.status}`;
-    if(r.status === "finished"){
+    const jr = await (await fetch(`/api/job/${job_id}`)).json();
+    st.textContent = `Status: ${jr.status}`;
+
+    if(jr.status === "finished"){
+      window.__tgLast = jr.result?.json || {};
+
       let htmlLink = "";
-      if(r.result?.html_base64){
-        const blob = new Blob([atob(r.result.html_base64)], { type: "text/html" });
+      if(jr.result?.html_base64){
+        const blob = new Blob([atob(jr.result.html_base64)], { type: "text/html" });
         const url = URL.createObjectURL(blob);
-        htmlLink = `<a class="button" href="${url}" target="_blank" rel="noopener">Open HTML Report</a>`;
+        htmlLink = `<div style="padding:8px 0">
+          <a class="button" href="${url}" target="_blank" rel="noopener">Open HTML Report</a>
+        </div>`;
       }
-      const ranking = renderRanking(r.result?.json || {});
-      out.innerHTML = `${htmlLink}${ranking}`;
+      set("tgResult", htmlLink + buildTopGearTable(window.__tgLast));
+      attachTopGearControls();
       break;
     }
-    if(r.status === "failed"){ out.textContent = r.error || "Job failed"; break; }
+
+    if(jr.status === "failed"){
+      out.textContent = jr.error || "Job failed";
+      break;
+    }
+
     await new Promise(r => setTimeout(r, 1500));
   }
 }
@@ -124,52 +358,22 @@ document.getElementById("tgRunPairs").onclick = async ()=>{
     const t = all[idx];
     return { name: t.name, override: t.override };
   }).filter(Boolean);
-  if(selected.length < 2){ document.getElementById("tgRunStatus").textContent = "Pick at least 2 trinkets."; return; }
+
+  if(selected.length < 2){
+    document.getElementById("tgRunStatus").textContent = "Pick at least 2 trinkets.";
+    return;
+  }
   await runPairs(selected);
 };
 
 document.getElementById("tgRunPairsAll").onclick = async ()=>{
   const all = (window.__tgTrinkets || []);
-  if(all.length < 2){ document.getElementById("tgRunStatus").textContent = "Need at least 2 trinkets."; return; }
-  // use *all* parsed trinkets regardless of UI selection
+  if(all.length < 2){
+    document.getElementById("tgRunStatus").textContent = "Need at least 2 trinkets.";
+    return;
+  }
   await runPairs(all.map(t => ({ name: t.name, override: t.override })));
 };
 
-function sanitizeName(s){
-  return (s||"").replace(/[^A-Za-z0-9_]+/g,"_").replace(/_+/g,"_").replace(/^_+|_+$/g,"").slice(0,64) || "item";
-}
-
-function baselineDpsFromJson(j){
-  const p = (j?.sim?.players || j?.players || [])[0];
-  const m = p?.collected_data?.dps?.mean;
-  return (typeof m === "number") ? m : null;
-}
-function equippedNameParts(){
-  const eq = (window.__tgTrinkets||[]).filter(t=>t.source==="equipped").map(t=>sanitizeName(t.name));
-  return eq.length === 2 ? eq : null;
-}
-function isEquippedPairName(name){
-  const eq = equippedNameParts();
-  if(!eq) return false;
-  const n = name || "";
-  return eq.every(x => n.includes(x));
-}
-
-
-function verdictAgainstEquipped(topProfilesetName){
-  const all = window.__tgTrinkets || [];
-  const eq = all.filter(t => t.source === "equipped");
-  if (eq.length < 2) return "";
-  const a = sanitizeName(eq[0].name), b = sanitizeName(eq[1].name);
-  const n = topProfilesetName || "";
-  const alreadyBest = (n.includes(a) && n.includes(b));
-  return alreadyBest
-    ? "✅ You’re already using the best trinket pair."
-    : "👉 Recommendation: equip the two trinkets shown in the Best pair line above.";
-}
-
-// …inside the `if (r.status === "finished")` block after you compute `ranking`…
-const topName = (r.result?.json?.sim?.profilesets?.results?.[0]?.name)
-             || (r.result?.json?.profilesets?.results?.[0]?.name) || "";
-const verdict = verdictAgainstEquipped(topName);
-out.innerHTML = `${htmlLink}${ranking}${verdict ? `<div class="badge" style="margin-top:8px">${verdict}</div>` : ""}`;
+// Optional: ensure controls are bound if toggled before first sim
+document.addEventListener("DOMContentLoaded", attachTopGearControls);
