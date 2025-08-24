@@ -13,13 +13,91 @@ async function postJSON(url, data){
 const ITEM_IMG_CDN = "https://wow.zamimg.com/images/wow/icons/large/";
 const PLACEHOLDER_ICON = ITEM_IMG_CDN + "inv_misc_questionmark.jpg";
 
-// in-memory cache: id -> { id, name, icon, ... }
+// in-memory cache: id -> { id, name, icon, unique_equipped, ... }
 window.__itemMeta = window.__itemMeta || {};
 function getItemMeta(id){ return id ? window.__itemMeta[id] : null; }
 function iconForItem(id){
   const m = getItemMeta(id);
   return m?.icon ? `${ITEM_IMG_CDN}${m.icon}.jpg` : PLACEHOLDER_ICON;
 }
+function isUniqueEquipped(id){
+  const m = getItemMeta(id);
+  return !!(m && m.unique_equipped);
+}
+
+function cleanFallbackLabel(s = "") {
+  // strip trailing _123456 id if present, turn underscores into spaces
+  return s.replace(/_\d{6}\b/, "").replace(/_/g, " ").trim();
+}
+
+function prettyItemNameById(id, fallback = "") {
+  const meta = getItemMeta(id);
+  if (meta?.name) return meta.name;           // best case
+  return cleanFallbackLabel(fallback) || (id ? `Item ${id}` : "Item");
+}
+
+// ===== rich item tooltip (uses Wowhead tooltip_html if present) =====
+let __tipEl = null;
+function ensureTip(){
+  if (__tipEl) return __tipEl;
+  const el = document.createElement("div");
+  el.id = "tgTooltip";
+  el.className = "tg-tooltip";
+  el.style.display = "none";
+  document.body.appendChild(el);
+  __tipEl = el;
+  return el;
+}
+function showItemTipAt(id, x, y){
+  const el = ensureTip();
+  const meta = getItemMeta(id) || {};
+  const name = meta.name || `Item ${id||""}`;
+  const body = meta.tooltip_html || "";
+  el.innerHTML = `<div class="tg-tooltip-inner">${body || name}</div>`;
+  el.style.display = "block";
+  positionTip(x, y);
+}
+function positionTip(x, y){
+  const el = ensureTip();
+  const pad = 12;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const rect = { w: el.offsetWidth, h: el.offsetHeight };
+  let left = x + pad, top = y + pad;
+  if (left + rect.w > vw - 6) left = Math.max(6, x - rect.w - pad);
+  if (top + rect.h > vh - 6) top = Math.max(6, y - rect.h - pad);
+  el.style.left = left + "px";
+  el.style.top = top + "px";
+}
+function hideItemTip(){ const el = ensureTip(); el.style.display = "none"; }
+
+function attachItemTooltips(){
+  const container = document.getElementById("tgResult");
+  if (!container) return;
+  // Remove any existing handlers by cloning
+  const clone = container.cloneNode(true);
+  container.parentNode.replaceChild(clone, container);
+  const root = clone;
+
+  root.addEventListener("mousemove", (e)=>{
+    const img = e.target.closest && e.target.closest("img.tg-item-icon");
+    if (!img) return;
+    const id = parseInt(img.getAttribute("data-item-id"), 10) || null;
+    if (!id) return;
+    // Warm meta if tooltip missing
+    const meta = getItemMeta(id);
+    if (!meta || !meta.tooltip_html){ warmItemMetaFromIds([id]).then(()=>{ showItemTipAt(id, e.clientX, e.clientY); }); }
+    showItemTipAt(id, e.clientX, e.clientY);
+  });
+  root.addEventListener("mouseleave", (e)=>{ hideItemTip(); });
+}
+
+function pairLabel(A, B) {
+  // A and B are { item_id, label }
+  const a = prettyItemNameById(A.item_id, A.label);
+  const b = prettyItemNameById(B.item_id, B.label);
+  return `${a} + ${b}`;
+}
+
 
 // Fetch icons/names for a list of trinkets (dedup by id), store in __itemMeta
 async function warmItemMetaFromTrinkets(trinkets){
@@ -41,6 +119,11 @@ function idsFromResultJson(json){
   for (const r of rows) {
     const name = r?.name || r?.profileset || r?.profile || "";
     (name.match(/\b\d{6}\b/g) || []).forEach(s => ids.add(parseInt(s, 10)));
+    // Also catch ids embedded in trinket segments
+    (name.match(/trinket[12]_[^_]*_(\d{6})/g) || []).forEach(seg => {
+      const m = seg.match(/(\d{6})/);
+      if (m) ids.add(parseInt(m[1], 10));
+    });
   }
   return [...ids];
 }
@@ -125,11 +208,15 @@ function renderTrinkets(list){
 
     const name = document.createElement("div");
     name.className = "tg-name";
-    name.textContent = (t.name || `trinket_${t.item_id || i}`).replace(/^trinket[12]_/, "");
+    name.textContent = prettyItemNameById(t.item_id, (t.name || `trinket_${t.item_id || i}`).replace(/^trinket[12]_/, ""));
+
 
     const meta = document.createElement("div");
     meta.className = "tg-slot badge";
-    meta.textContent = `${t.slot} • ${t.source}`;
+    const uBadge = isUniqueEquipped(parseInt(t.item_id,10))
+      ? ` <span class="badge" title="Unique-Equipped — you can’t equip two copies">Unique</span>`
+      : "";
+    meta.innerHTML = `${t.slot} • ${t.source}${uBadge}`;
 
     const sel = document.createElement("input");
     sel.type = "checkbox";
@@ -193,15 +280,56 @@ function isEquippedPairName(name){
 }
 
 // --- Robust partsFromProfilesetName ---
-// 1) Prefer first two unique 6-digit IDs in the name
-// 2) If not found, scan for any known IDs (from parsed trinkets and warmed meta)
-// 3) Fallback to sanitized-name contains logic
+// 0) If name is "T_<left>__<right>", try to match item names from parsed trinkets
+// 1) Otherwise: first-two-ids regex
+// 2) Otherwise: known-IDs scan
+// 3) Otherwise: sanitized-name contains
 function partsFromProfilesetName(name){
   const all = window.__tgTrinkets || [];
-  const n = (name || "").replace(/^T_/,"");
+  const raw = (name || "");
 
-  // #1: direct regex for six-digit ids
-  const firstTwo = [...new Set((n.match(/\b\d{6}\b/g) || []).map(x => parseInt(x,10)))].slice(0,2);
+  // 0) Decode id-based naming: T_<idA>_VS_<idB>
+  let m = /^T_(\d{6})_VS_(\d{6})$/.exec(raw);
+  if (m){
+    const idA = parseInt(m[1], 10), idB = parseInt(m[2], 10);
+    const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
+    return [
+      { item_id: idA, label: metaA?.name || `Item ${idA}` },
+      { item_id: idB, label: metaB?.name || `Item ${idB}` }
+    ];
+  }
+
+  // 0a) Decode our previous naming: T_<left>_VS_<right> or legacy T_<left>__<right>
+  m = /^T_(.+?)_VS_(.+)$/.exec(raw) || /^T_(.+?)__(.+)$/.exec(raw);
+  if (m) {
+    const pick = (s) => {
+      const idMatch = (s.match(/\d{6}(?!.*\d)/) || [])[0];
+      const id = idMatch ? parseInt(idMatch, 10) : null;
+      const meta = id ? getItemMeta(id) : null;
+      return { item_id: id, label: meta?.name || cleanFallbackLabel(s) };
+    };
+    const A = pick(m[1]);
+    const B = pick(m[2]);
+    return [A, B];
+  }
+
+  // 0b) Generic SimC-like names containing two segments starting with trinket1_/trinket2_
+  // Example: "T_trinket1_Soulbreaker_s_Sigil_238390_trinket2_Equipped_242394"
+  {
+    const segs = (raw.match(/trinket[12]_[A-Za-z0-9_]+/g) || []);
+    if (segs.length >= 2) {
+      const pick = (s) => {
+        const idMatch = (s.match(/\d{6}(?!.*\d)/) || [])[0];
+        const id = idMatch ? parseInt(idMatch, 10) : null;
+        const meta = id ? getItemMeta(id) : null;
+        return { item_id: id, label: meta?.name || cleanFallbackLabel(s) };
+      };
+      return [pick(segs[0]), pick(segs[1])];
+    }
+  }
+
+  // 1) direct "first two unique 6-digit ids" in the whole string
+  const firstTwo = [...new Set((raw.match(/\b\d{6}\b/g) || []).map(x => parseInt(x,10)))].slice(0,2);
   if (firstTwo.length === 2){
     const [idA,idB] = firstTwo;
     const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
@@ -211,14 +339,14 @@ function partsFromProfilesetName(name){
     ];
   }
 
-  // #2: scan with known IDs
+  // 2) scan with known IDs (from parsed trinkets + warmed meta)
   const knownIds = new Set([
     ...((all.map(t => t.item_id).filter(Boolean)) || []),
     ...Object.keys(window.__itemMeta || {}).map(x => parseInt(x,10))
   ]);
   const found = [];
   for (const id of knownIds){
-    if (n.includes(String(id))){
+    if (raw.includes(String(id))){
       found.push(id);
       if (found.length === 2) break;
     }
@@ -232,18 +360,18 @@ function partsFromProfilesetName(name){
     ];
   }
 
-  // #3: fallback to sanitized-name matching
+  // 3) fallback to sanitized-name matching
   const hits = [];
   for (const t of all) {
     const sn = sanitizeName(t.name);
-    if (sn && n.includes(sn)) hits.push({ item_id: t.item_id || null, label: t.name || "" });
+    if (sn && raw.includes(sn)) hits.push({ item_id: t.item_id || null, label: t.name || "" });
     if (hits.length === 2) break;
   }
   if (hits.length === 2) return hits;
 
-  // last resort
   return [{ item_id: null, label: "" }, { item_id: null, label: "" }];
 }
+
 
 // Build the Top-Gear-style table
 function buildTopGearTable(resultJson){
@@ -251,8 +379,8 @@ function buildTopGearTable(resultJson){
                 || resultJson?.profilesets?.results || [];
   const baseline = baselineDpsFromJson(resultJson);
 
-  // Normalize + sort (desc)
-  const rows = profiles.map(p=>{
+  // Normalize
+  const rowsRaw = profiles.map(p=>{
     const name = p.name || p.profileset || p.profile || "set";
     const dps  = (p.dps?.mean ?? p.collected_data?.dps?.mean ?? p.mean ?? null);
     return {
@@ -262,6 +390,23 @@ function buildTopGearTable(resultJson){
       isEquipped: isEquippedPairName(name)
     };
   }).filter(x => x.dps !== null);
+  
+  // De-duplicate by item-id pair (unordered) and drop same-id pairs defensively
+  const bestByPair = new Map();
+  for(const r of rowsRaw){
+    const [A,B] = r.items || [];
+    const idA = parseInt(A?.item_id, 10) || null;
+    const idB = parseInt(B?.item_id, 10) || null;
+    if (idA && idB && idA === idB) continue; // skip identical trinket pairs
+    const key = (idA && idB)
+      ? (idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`)
+      : sanitizeName(r.name);
+    const cur = bestByPair.get(key);
+    if (!cur || (r.dps > cur.dps)) bestByPair.set(key, r);
+  }
+  const rows = [...bestByPair.values()];
+  
+  // Sort (desc)
   rows.sort((a,b)=>b.dps - a.dps);
   if (rows.length) rows[0].isTop = true;
 
@@ -304,8 +449,8 @@ function buildTopGearTable(resultJson){
     html += `
       <div class="tg-row equipped" id="row-equipped">
         <div class="tg-rank"></div>
-        <div class="tg-icon">${t1?`<img src="${iconForItem(t1)}" alt="" title="${(m1?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
-        <div class="tg-icon">${t2?`<img src="${iconForItem(t2)}" alt="" title="${(m2?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
+        <div class="tg-icon">${t1?`<img src="${iconForItem(t1)}" alt="" title="${((m1?.name||"") + (isUniqueEquipped(parseInt(t1,10))?' (Unique-Equipped)':'')).replace(/"/g,'&quot;')}">`:``}</div>
+        <div class="tg-icon">${t2?`<img src="${iconForItem(t2)}" alt="" title="${((m2?.name||"") + (isUniqueEquipped(parseInt(t2,10))?' (Unique-Equipped)':'')).replace(/"/g,'&quot;')}">`:``}</div>
         <div class="tg-name">Current Gear <span class="badge-eq">Equipped</span></div>
         <div class="tg-dps">${dpsCell}${bar(baseline)}</div>
         <div class="tg-delta">—</div>
@@ -318,9 +463,6 @@ function buildTopGearTable(resultJson){
     const [A,B] = row.items;
     const aMeta = getItemMeta(A.item_id);
     const bMeta = getItemMeta(B.item_id);
-
-    if (!A.item_id || !aMeta) console.debug("No meta for A", row.name, A);
-    if (!B.item_id || !bMeta) console.debug("No meta for B", row.name, B);
 
     const tag = row.isTop
       ? `<span class="badge-top">Top Gear</span>`
@@ -336,12 +478,17 @@ function buildTopGearTable(resultJson){
       : fmtDelta(delta);
     const dCls = (delta!=null) ? (delta>=0 ? "delta-pos" : "delta-neg") : "";
 
+    const titleA = ((aMeta?.name||"") + (isUniqueEquipped(A.item_id)?' (Unique-Equipped)':'')).replace(/"/g,'&quot;');
+    const titleB = ((bMeta?.name||"") + (isUniqueEquipped(B.item_id)?' (Unique-Equipped)':'')).replace(/"/g,'&quot;');
+
     html += `
       <div class="tg-row ${row.isTop ? "top" : ""}">
         <div class="tg-rank">${idx+1}</div>
-        <div class="tg-icon">${A.item_id?`<img src="${iconForItem(A.item_id)}" alt="" title="${(aMeta?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
-        <div class="tg-icon">${B.item_id?`<img src="${iconForItem(B.item_id)}" alt="" title="${(bMeta?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
-        <div class="tg-name">${row.name} ${tag}</div>
+        <div class="tg-icon">${A.item_id?`<img class="tg-item-icon" data-item-id="${A.item_id}" src="${iconForItem(A.item_id)}" alt="" title="${titleA}">`:``}</div>
+        <div class="tg-icon">${B.item_id?`<img class="tg-item-icon" data-item-id="${B.item_id}" src="${iconForItem(B.item_id)}" alt="" title="${titleB}">`:``}</div>
+        <div class="tg-name" title="${pairLabel(A,B).replace(/"/g,'&quot;')}">
+          ${pairLabel(A,B)} ${tag}
+        </div>
         <div class="tg-dps">${dpsCell}${bar(row.dps)}</div>
         <div class="tg-delta ${dCls}">${deltaCell}</div>
       </div>
@@ -380,7 +527,24 @@ async function runPairs(items){
   const base = (val("tgBase").trim() || val("tgSimc").trim());
   const extra = (val("tgArgs")||"").split(",").map(s=>s.trim()).filter(Boolean);
 
-  st.textContent = "Submitting...";
+  // Heads-up if user selected two copies of a unique-equipped item
+  try{
+    const all = window.__tgTrinkets || [];
+    const idByName = new Map(all.map(t => [t.name, parseInt(t.item_id,10) || null]));
+    const counts = new Map();
+    for (const sel of items){
+      const id = idByName.get(sel.name);
+      if (id && isUniqueEquipped(id)){
+        counts.set(id, (counts.get(id)||0) + 1);
+      }
+    }
+    const dupes = [...counts.entries()].filter(([,c]) => c > 1);
+    if (dupes.length){
+      st.textContent = "Note: duplicate Unique-Equipped items selected — those pairs will be skipped.";
+    }
+  }catch{ /* non-fatal */ }
+
+  st.textContent = st.textContent || "Submitting...";
   out.innerHTML = "";
 
   const { job_id } = await postJSON("/api/top-gear-trinket-pairs", {
@@ -415,6 +579,7 @@ async function runPairs(items){
       await warmItemMetaFromIds([...idsAll]);
 
       set("tgResult", htmlLink + buildTopGearTable(window.__tgLast));
+      attachItemTooltips();
       attachTopGearControls();
       break;
     }
@@ -434,7 +599,13 @@ document.getElementById("tgRunPairs").onclick = async ()=>{
   const selected = rows.map((row, idx)=>{
     if(!row.querySelector(".tg-select").checked) return null;
     const t = all[idx];
-    return { name: t.name, override: t.override };
+      const id = parseInt(t.item_id, 10) || null;
+      return {
+        name: t.name,
+        override: t.override,
+        item_id: id,
+        unique_equipped: isUniqueEquipped(id)
+      };
   }).filter(Boolean);
 
   if(selected.length < 2){
@@ -450,7 +621,15 @@ document.getElementById("tgRunPairsAll").onclick = async ()=>{
     document.getElementById("tgRunStatus").textContent = "Need at least 2 trinkets.";
     return;
   }
-  await runPairs(all.map(t => ({ name: t.name, override: t.override })));
+  await runPairs(all.map(t => {
+    const id = parseInt(t.item_id, 10) || null;
+    return {
+      name: t.name,
+      override: t.override,
+      item_id: id,
+      unique_equipped: isUniqueEquipped(id)
+     };
+  }));
 };
 
 // Optional: ensure controls are bound if toggled before first sim
