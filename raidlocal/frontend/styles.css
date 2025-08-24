@@ -80,5 +80,9 @@ a.button{display:inline-block;margin:6px 0;color:#93c5fd}
   pointer-events:none;
 }
 
+.tg-icon img{
+  width: 30px; height: 30px; display:block; border-radius:6px; object-fit: cover;
+}
+
 
 

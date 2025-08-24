@@ -9,6 +9,51 @@ async function postJSON(url, data){
   return r.json();
 }
 
+// ===== item meta cache (icons/names/tooltips) =====
+const ITEM_IMG_CDN = "https://wow.zamimg.com/images/wow/icons/large/";
+const PLACEHOLDER_ICON = ITEM_IMG_CDN + "inv_misc_questionmark.jpg";
+// --- item meta cache (id -> {id,name,icon,...}) ---
+window.__itemMeta = window.__itemMeta || {};
+function getItemMeta(id){ return id ? window.__itemMeta[id] : null; }
+function iconForItem(id){
+  const m = getItemMeta(id);
+  return (m?.icon)
+    ? `https://wow.zamimg.com/images/wow/icons/large/${m.icon}.jpg`
+    : `https://wow.zamimg.com/images/wow/icons/large/inv_misc_questionmark.jpg`;
+}
+
+// Fetch icons/names for a list of trinkets (dedup by id)
+async function warmItemMetaFromTrinkets(trinkets){
+  const ids = [...new Set(trinkets.map(t => t.item_id).filter(Boolean))];
+  if (!ids.length) return false;
+  const res = await fetch(`/api/items?ids=${ids.join(",")}`);
+  if (!res.ok) return false;
+
+  const raw = await res.json();
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw.value) ? raw.value : []);
+  list.forEach(m => { window.__itemMeta[m.id] = m; });
+  return true;
+}
+
+
+async function primeItemMetaFromTrinkets(trinkets){
+  const want = [...new Set(trinkets.map(t => t.item_id).filter(Boolean))]
+                .filter(id => !window.__itemMeta.has(id));
+  if (want.length === 0) return;
+
+  try{
+    const q = want.join(",");
+    const res = await fetch(`/api/items?ids=${encodeURIComponent(q)}`);
+    if (!res.ok) throw new Error(await res.text());
+    const arr = await res.json();
+    arr.forEach(m => window.__itemMeta.set(m.id, m));
+  }catch(err){
+    console.warn("items fetch failed", err);
+  }
+}
+
+
+
 //------savedstate------
 function saveState(){
   try {
@@ -57,17 +102,16 @@ function fmtDelta(n){
 // =====================================================
 function renderTrinkets(list){
   const el = document.getElementById("tgList");
-  if(!list.length){
-    el.innerHTML = "<div class='status'>No trinkets found.</div>";
-    return;
-  }
+  if(!list.length){ el.innerHTML = "<div class='status'>No trinkets found.</div>"; return; }
   el.innerHTML = "";
   list.forEach((t,i)=>{
     const row = document.createElement("div");
-    row.className = "tg-item";
-    row.dataset.index = i;
+    row.className = "tg-item"; row.dataset.index = i;
 
-    const icon = document.createElement("div"); icon.className = "tg-icon";
+    const icon = document.createElement("div");
+    icon.className = "tg-icon";
+    icon.innerHTML = `<img src="${iconForItem(t.item_id)}" alt="">`;   // <-- add image
+
     const name = document.createElement("div"); name.className = "tg-name";
     name.textContent = (t.name || `trinket_${t.item_id || i}`).replace(/^trinket[12]_/, "");
 
@@ -81,6 +125,7 @@ function renderTrinkets(list){
   });
 }
 
+
 document.getElementById("tgParse").onclick = async ()=>{
   const simc = val("tgSimc").trim();
   const includeEq = document.getElementById("tgIncludeEquipped").checked;
@@ -92,12 +137,19 @@ document.getElementById("tgParse").onclick = async ()=>{
       include_equipped: includeEq
     });
     window.__tgTrinkets = data.trinkets;
-    renderTrinkets(data.trinkets);
+
+    // PRELOAD meta first so icons are ready when we render
+    await warmItemMetaFromTrinkets(window.__tgTrinkets);
+
+    renderTrinkets(window.__tgTrinkets);     // now icons should appear
     st.textContent = `Found ${data.trinkets.length} trinket(s)`;
   }catch(e){
     st.textContent = "Error: " + e.message;
   }
 };
+
+
+
 
 document.getElementById("tgSelectAll").onclick =
   ()=> document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = true);
@@ -146,58 +198,41 @@ function partsFromProfilesetName(name){
 
 // Build the Top-Gear-style table
 function buildTopGearTable(resultJson){
-  // 1) Get profileset results safely
   const profiles = resultJson?.sim?.profilesets?.results
-                || resultJson?.profilesets?.results || [];
-  if (!Array.isArray(profiles) || profiles.length === 0) {
-    return `<div class="status">No profileset results found in JSON (open HTML report to verify).</div>`;
-  }
+                 || resultJson?.profilesets?.results || [];
+  const baseline = baselineDpsFromJson(resultJson);
 
-  // 2) Baseline DPS (equipped profile)
-  const p0 = (resultJson?.sim?.players || resultJson?.players || [])[0];
-  const baseline = Number(
-    p0?.collected_data?.dps?.mean ??
-    p0?.dps?.mean ??
-    p0?.mean ??
-    NaN
-  );
-
-  // 3) Normalize rows (extract DPS robustly)
-  const rows = profiles.map(p => {
+  // Normalize + sort (desc)
+  const rows = profiles.map(p=>{
     const name = p.name || p.profileset || p.profile || "set";
-    const dps = Number(
-      p.dps?.mean ??
-      p.collected_data?.dps?.mean ??
-      p.mean ??
-      p.dps ??           // some builds expose raw DPS here
-      p.DPS ??           // super fallback
-      NaN
-    );
+    const dps  = (p.dps?.mean ?? p.collected_data?.dps?.mean ?? p.mean ?? null);
     return {
       name,
-      dps,
+      dps: (typeof dps === "number" ? dps : null),
       items: partsFromProfilesetName(name),
       isEquipped: isEquippedPairName(name)
     };
-  }).filter(r => Number.isFinite(r.dps) && r.dps > 0);
+  }).filter(x => x.dps !== null);
+  rows.sort((a,b)=>b.dps - a.dps);
+  if (rows.length) rows[0].isTop = true;
 
-  if (rows.length === 0) {
-    return `<div class="status">Could not read DPS from profilesets (got NaN). Check JSON structure.</div>`;
-  }
-
-  // 4) Sort & mark top
-  rows.sort((a,b) => b.dps - a.dps);
-  rows[0].isTop = true;
-
-  // 5) Define topDps ONCE and use everywhere
-  const topDps = rows[0]?.dps || 0;
-
-  // 6) Reference mode for labels (not for bar width)
+  // ---- References / toggles
   const refIsTop = document.getElementById("tgRefTop")?.checked || false;
   const relative = document.getElementById("tgRelDps")?.checked || false;
-  const ref = refIsTop ? (rows[0]?.dps ?? baseline) : baseline;
 
-  // header
+  // Reference number used for delta cells
+  const ref = refIsTop ? (rows[0]?.dps ?? baseline ?? 0) : (baseline ?? 0);
+
+  // **Top DPS** (used for bar widths ONLY)
+  const topDps = rows.length ? rows[0].dps : (baseline ?? 0);
+
+  // Bar helper (always vs top DPS)
+  const bar = (val) => {
+    const pct = topDps ? Math.max(0, Math.min(100, (val / topDps) * 100)) : 0;
+    return `<div class="tg-bar"><div class="fill" style="width:${pct.toFixed(1)}%"></div></div>`;
+  };
+
+  // Header
   let html = `
     <div class="tg-row header">
       <div class="tg-rank">#</div><div></div><div></div>
@@ -207,73 +242,55 @@ function buildTopGearTable(resultJson){
     </div>
   `;
 
-  // 7) Equipped baseline row
-  if (Number.isFinite(baseline) && baseline > 0) {
-    const eq = (window.__tgTrinkets||[]).filter(t => t.source === "equipped");
+  // Equipped baseline row
+  if (typeof baseline === "number") {
+    const eq = (window.__tgTrinkets||[]).filter(t=>t.source==="equipped");
     const [t1,t2] = [eq[0]?.item_id, eq[1]?.item_id];
+    const m1 = getItemMeta(t1), m2 = getItemMeta(t2);
 
-    const pctEqTrue = topDps ? (baseline / topDps * 100) : 0;
-    // optional contrast boost (map 90–100 → 0–100 visually)
-    const pctEqVis  = Math.max(0, Math.min(100, (pctEqTrue - 90) * 10));
-
-    const label = relative && Number.isFinite(ref) && ref > 0
-      ? (baseline/ref*100).toFixed(1) + "%"
+    const dpsCell = relative && ref
+      ? (baseline / ref * 100).toFixed(1) + "%"
       : fmtDps(baseline);
 
     html += `
       <div class="tg-row equipped" id="row-equipped">
         <div class="tg-rank"></div>
-        <div class="tg-icon">${t1?`<img src="${iconForItem(t1)}" alt="">`:``}</div>
-        <div class="tg-icon">${t2?`<img src="${iconForItem(t2)}" alt="">`:``}</div>
+        <div class="tg-icon">${t1?`<img src="${iconForItem(t1)}" alt="" title="${(m1?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
+        <div class="tg-icon">${t2?`<img src="${iconForItem(t2)}" alt="" title="${(m2?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
         <div class="tg-name">Current Gear <span class="badge-eq">Equipped</span></div>
-        <div class="tg-dps">
-          ${label}
-          <div class="tg-bar" style="--fill:${(pctEqVis).toFixed(1)}%">
-            <div class="fill" style="width:${(pctEqVis).toFixed(1)}%"></div>
-            <div class="tail"></div>
-          </div>
-        </div>
+        <div class="tg-dps">${dpsCell}${bar(baseline)}</div>
         <div class="tg-delta">—</div>
       </div>
     `;
   }
 
-  // 8) Each profileset row
-  rows.forEach((row, idx) => {
-    const refSafe = (Number.isFinite(ref) && ref > 0) ? ref : null;
-    const delta   = (refSafe != null) ? (row.dps - refSafe) : null;
-
+  // Rows
+  rows.forEach((row, idx)=>{
     const [A,B] = row.items;
-    const tag = row.isTop ? `<span class="badge-top">Top Gear</span>`
-                          : (row.isEquipped ? `<span class="badge-eq">Equipped pair</span>` : "");
+    const aMeta = getItemMeta(A.item_id);
+    const bMeta = getItemMeta(B.item_id);
 
-    const dpsCell = (relative && refSafe)
-      ? (row.dps / refSafe * 100).toFixed(1) + "%"
+    const tag = row.isTop
+      ? `<span class="badge-top">Top Gear</span>`
+      : (row.isEquipped ? `<span class="badge-eq">Equipped pair</span>` : "");
+
+    const dpsCell = relative && ref
+      ? (row.dps / ref * 100).toFixed(1) + "%"
       : fmtDps(row.dps);
 
-    const deltaCell = (relative && refSafe)
-      ? (row.dps / refSafe * 100).toFixed(1) + "%"
+    const delta = (ref ? (row.dps - ref) : null);
+    const deltaCell = relative && ref
+      ? (row.dps / ref * 100).toFixed(1) + "%"
       : fmtDelta(delta);
-
     const dCls = (delta!=null) ? (delta>=0 ? "delta-pos" : "delta-neg") : "";
-
-    // bar width = % of TOP (100% = best pair)
-    const pctTopTrue = topDps ? (row.dps / topDps * 100) : 0;
-    const pctTopVis  = Math.max(0, Math.min(100, (pctTopTrue - 90) * 10)); // comment out if you don't want boosting
 
     html += `
       <div class="tg-row ${row.isTop ? "top" : ""}">
         <div class="tg-rank">${idx+1}</div>
-        <div class="tg-icon">${A.item_id?`<img src="${iconForItem(A.item_id)}" alt="">`:``}</div>
-        <div class="tg-icon">${B.item_id?`<img src="${iconForItem(B.item_id)}" alt="">`:``}</div>
+        <div class="tg-icon">${A.item_id?`<img src="${iconForItem(A.item_id)}" alt="" title="${(aMeta?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
+        <div class="tg-icon">${B.item_id?`<img src="${iconForItem(B.item_id)}" alt="" title="${(bMeta?.name||"").replace(/"/g,'&quot;')}">`:``}</div>
         <div class="tg-name">${row.name} ${tag}</div>
-        <div class="tg-dps">
-          ${dpsCell}
-          <div class="tg-bar" style="--fill:${pctTopVis.toFixed(1)}%">
-            <div class="fill" style="width:${pctTopVis.toFixed(1)}%"></div>
-            <div class="tail"></div>
-          </div>
-        </div>
+        <div class="tg-dps">${dpsCell}${bar(row.dps)}</div>
         <div class="tg-delta ${dCls}">${deltaCell}</div>
       </div>
     `;
@@ -281,6 +298,7 @@ function buildTopGearTable(resultJson){
 
   return `<div class="tg-table">${html}</div>`;
 }
+
 
 
 // Rebind toggle controls to re-render the current results
@@ -336,6 +354,7 @@ async function runPairs(items){
           <a class="button" href="${url}" target="_blank" rel="noopener">Open HTML Report</a>
         </div>`;
       }
+      await warmItemMetaFromTrinkets(window.__tgTrinkets || []);
       set("tgResult", htmlLink + buildTopGearTable(window.__tgLast));
       attachTopGearControls();
       break;
