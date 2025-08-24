@@ -405,6 +405,35 @@ function buildTopGearTable(resultJson){
     if (!cur || (r.dps > cur.dps)) bestByPair.set(key, r);
   }
   const rows = [...bestByPair.values()];
+
+  // Inject equipped as a ranked row instead of a fixed header, if we have baseline & ids
+  if (typeof baseline === "number"){
+    const eq = (window.__tgTrinkets||[]).filter(t=>t.source==="equipped");
+    const idA = parseInt(eq[0]?.item_id,10) || null;
+    const idB = parseInt(eq[1]?.item_id,10) || null;
+    if (idA && idB){
+      const equipKey = (idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`);
+      const findKey = (r)=>{
+        const a = parseInt(r?.items?.[0]?.item_id,10) || null;
+        const b = parseInt(r?.items?.[1]?.item_id,10) || null;
+        return (a && b) ? (a < b ? `${a}-${b}` : `${b}-${a}`) : null;
+      };
+      const idx = rows.findIndex(r => findKey(r) === equipKey);
+      if (idx >= 0){
+        rows[idx].isEquipped = true;
+        rows[idx]._equip = true;
+      } else {
+        const equipRow = {
+          name: `T_${idA}_VS_${idB}`,
+          dps: baseline,
+          items: [{ item_id:idA, label:"" }, { item_id:idB, label:"" }],
+          isEquipped: true,
+          _equip: true
+        };
+        rows.push(equipRow);
+      }
+    }
+  }
   
   // Sort (desc)
   rows.sort((a,b)=>b.dps - a.dps);
@@ -412,10 +441,10 @@ function buildTopGearTable(resultJson){
 
   // ---- References / toggles
   const refIsTop = document.getElementById("tgRefTop")?.checked || false;
-  const relative = document.getElementById("tgRelDps")?.checked || false;
 
-  // Reference number used for delta cells (equipped baseline or top)
-  const ref = refIsTop ? (rows[0]?.dps ?? baseline ?? 0) : (baseline ?? 0);
+  // Reference number used for delta cells (equipped row or top)
+  const equippedRow = rows.find(r => r.isEquipped);
+  const ref = refIsTop ? (rows[0]?.dps ?? 0) : (equippedRow?.dps ?? baseline ?? 0);
 
   // **Top DPS** (used for bar widths ONLY)
   const topDps = rows.length ? rows[0].dps : (baseline ?? 0);
@@ -431,32 +460,10 @@ function buildTopGearTable(resultJson){
     <div class="tg-row header">
       <div class="tg-rank">#</div><div></div><div></div>
       <div>Trinket Pair</div>
-      <div class="tg-dps">${relative ? "Rel DPS" : "DPS"}</div>
+      <div class="tg-dps">DPS</div>
       <div class="tg-delta">Δ vs ${refIsTop ? "Top" : "Equipped"}</div>
     </div>
   `;
-
-  // Equipped baseline row
-  if (typeof baseline === "number") {
-    const eq = (window.__tgTrinkets||[]).filter(t=>t.source==="equipped");
-    const [t1,t2] = [eq[0]?.item_id, eq[1]?.item_id];
-    const m1 = getItemMeta(t1), m2 = getItemMeta(t2);
-
-    const dpsCell = relative && ref
-      ? (baseline / ref * 100).toFixed(1) + "%"
-      : fmtDps(baseline);
-
-    html += `
-      <div class="tg-row equipped" id="row-equipped">
-        <div class="tg-rank"></div>
-        <div class="tg-icon">${t1?`<img src="${iconForItem(t1)}" alt="" title="${((m1?.name||"") + (isUniqueEquipped(parseInt(t1,10))?' (Unique-Equipped)':'')).replace(/"/g,'&quot;')}">`:``}</div>
-        <div class="tg-icon">${t2?`<img src="${iconForItem(t2)}" alt="" title="${((m2?.name||"") + (isUniqueEquipped(parseInt(t2,10))?' (Unique-Equipped)':'')).replace(/"/g,'&quot;')}">`:``}</div>
-        <div class="tg-name">Current Gear <span class="badge-eq">Equipped</span></div>
-        <div class="tg-dps">${dpsCell}${bar(baseline)}</div>
-        <div class="tg-delta">—</div>
-      </div>
-    `;
-  }
 
   // Rows
   rows.forEach((row, idx)=>{
@@ -466,28 +473,30 @@ function buildTopGearTable(resultJson){
 
     const tag = row.isTop
       ? `<span class="badge-top">Top Gear</span>`
-      : (row.isEquipped ? `<span class="badge-eq">Equipped pair</span>` : "");
+      : (row.isEquipped ? `<span class="badge-eq">Equipped</span>` : "");
 
-    const dpsCell = relative && ref
-      ? (row.dps / ref * 100).toFixed(1) + "%"
-      : fmtDps(row.dps);
+    const dpsCell = fmtDps(row.dps);
 
     const delta = (ref ? (row.dps - ref) : null);
-    const deltaCell = relative && ref
-      ? (row.dps / ref * 100).toFixed(1) + "%"
-      : fmtDelta(delta);
-    const dCls = (delta!=null) ? (delta>=0 ? "delta-pos" : "delta-neg") : "";
+    let deltaCell = "—";
+    if (delta!=null){
+      const pct = ref ? ((row.dps / ref - 1) * 100) : 0;
+      const sign = pct>=0 ? "+" : "";
+      deltaCell = `${fmtDelta(delta)} (${sign}${pct.toFixed(1)}%)`;
+    }
+    const dCls = (delta!=null) ? (delta>0 ? "delta-pos" : (delta<0 ? "delta-neg" : "")) : "";
 
     const titleA = ((aMeta?.name||"") + (isUniqueEquipped(A.item_id)?' (Unique-Equipped)':'')).replace(/"/g,'&quot;');
     const titleB = ((bMeta?.name||"") + (isUniqueEquipped(B.item_id)?' (Unique-Equipped)':'')).replace(/"/g,'&quot;');
 
+    const label = row.isEquipped ? `Current Gear — ${pairLabel(A,B)}` : pairLabel(A,B);
     html += `
-      <div class="tg-row ${row.isTop ? "top" : ""}">
+      <div class="tg-row ${row.isTop ? "top" : ""} ${row.isEquipped ? "equipped" : ""}" ${row.isEquipped ? "id=\"row-equipped\"" : ""}>
         <div class="tg-rank">${idx+1}</div>
         <div class="tg-icon">${A.item_id?`<img class="tg-item-icon" data-item-id="${A.item_id}" src="${iconForItem(A.item_id)}" alt="" title="${titleA}">`:``}</div>
         <div class="tg-icon">${B.item_id?`<img class="tg-item-icon" data-item-id="${B.item_id}" src="${iconForItem(B.item_id)}" alt="" title="${titleB}">`:``}</div>
-        <div class="tg-name" title="${pairLabel(A,B).replace(/"/g,'&quot;')}">
-          ${pairLabel(A,B)} ${tag}
+        <div class="tg-name" title="${label.replace(/"/g,'&quot;')}">
+          ${label} ${tag}
         </div>
         <div class="tg-dps">${dpsCell}${bar(row.dps)}</div>
         <div class="tg-delta ${dCls}">${deltaCell}</div>

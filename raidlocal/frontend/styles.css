@@ -40,8 +40,9 @@ a.button{display:inline-block;margin:6px 0;color:#93c5fd}
 .delta-neg{color:#ef4444}      /* negative (red) */
 .badge-eq{font-size:11px;background:#0f1c21;border:1px solid #1f3a3f;color:#7fe6cc;border-radius:999px;padding:1px 6px;margin-left:6px}
 .badge-top{font-size:11px;background:#211019;border:1px solid #4e2233;color:#ff9db2;border-radius:999px;padding:1px 6px;margin-left:6px}
-.tg-row.equipped{background:linear-gradient(90deg, rgba(40,55,72,.35), rgba(40,55,72,0))}
-.tg-row.top{background:linear-gradient(90deg, rgba(83,28,45,.35), rgba(83,28,45,0))}
+.tg-row.equipped{background:linear-gradient(90deg, rgba(122,76,13,.22), rgba(122,76,13,0.02))}
+.tg-row.equipped .tg-name{font-weight:700}
+.tg-row.top{background:linear-gradient(90deg, rgba(24,85,34,.22), rgba(24,85,34,0.02))}
 
 /* Improve trinket icons (reusing your .tg-icon) */
 .tg-icon{width:30px;height:30px;border-radius:6px;background:#202a36;box-shadow:inset 0 0 0 1px #35455a}
