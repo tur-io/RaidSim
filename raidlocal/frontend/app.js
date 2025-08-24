@@ -12,55 +12,37 @@ async function postJSON(url, data){
 // ===== item meta cache (icons/names/tooltips) =====
 const ITEM_IMG_CDN = "https://wow.zamimg.com/images/wow/icons/large/";
 const PLACEHOLDER_ICON = ITEM_IMG_CDN + "inv_misc_questionmark.jpg";
-// --- item meta cache (id -> {id,name,icon,...}) ---
+
+// in-memory cache: id -> { id, name, icon, ... }
 window.__itemMeta = window.__itemMeta || {};
 function getItemMeta(id){ return id ? window.__itemMeta[id] : null; }
 function iconForItem(id){
   const m = getItemMeta(id);
-  return (m?.icon)
-    ? `https://wow.zamimg.com/images/wow/icons/large/${m.icon}.jpg`
-    : `https://wow.zamimg.com/images/wow/icons/large/inv_misc_questionmark.jpg`;
+  return m?.icon ? `${ITEM_IMG_CDN}${m.icon}.jpg` : PLACEHOLDER_ICON;
 }
 
-// Fetch icons/names for a list of trinkets (dedup by id)
+// Fetch icons/names for a list of trinkets (dedup by id), store in __itemMeta
 async function warmItemMetaFromTrinkets(trinkets){
-  const ids = [...new Set(trinkets.map(t => t.item_id).filter(Boolean))];
+  const ids = [...new Set((trinkets || []).map(t => t.item_id).filter(Boolean))];
   if (!ids.length) return false;
+
   const res = await fetch(`/api/items?ids=${ids.join(",")}`);
   if (!res.ok) return false;
 
   const raw = await res.json();
-  const list = Array.isArray(raw) ? raw : (Array.isArray(raw.value) ? raw.value : []);
-  list.forEach(m => { window.__itemMeta[m.id] = m; });
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.value) ? raw.value : []);
+  list.forEach(m => { if (m?.id) window.__itemMeta[m.id] = m; });
   return true;
 }
 
-
-async function primeItemMetaFromTrinkets(trinkets){
-  const want = [...new Set(trinkets.map(t => t.item_id).filter(Boolean))]
-                .filter(id => !window.__itemMeta.has(id));
-  if (want.length === 0) return;
-
-  try{
-    const q = want.join(",");
-    const res = await fetch(`/api/items?ids=${encodeURIComponent(q)}`);
-    if (!res.ok) throw new Error(await res.text());
-    const arr = await res.json();
-    arr.forEach(m => window.__itemMeta.set(m.id, m));
-  }catch(err){
-    console.warn("items fetch failed", err);
-  }
-}
-
-
-
-//------savedstate------
+// ------ saved state ------
 function saveState(){
   try {
     localStorage.setItem("tgSimc", document.getElementById("tgSimc").value);
     localStorage.setItem("tgBase", document.getElementById("tgBase").value);
     localStorage.setItem("tgArgs", document.getElementById("tgArgs").value);
-    localStorage.setItem("tgIncludeEquipped", document.getElementById("tgIncludeEquipped").checked ? "1":"0");
+    localStorage.setItem("tgIncludeEquipped",
+      document.getElementById("tgIncludeEquipped").checked ? "1" : "0");
   } catch {}
 }
 function loadState(){
@@ -102,29 +84,37 @@ function fmtDelta(n){
 // =====================================================
 function renderTrinkets(list){
   const el = document.getElementById("tgList");
-  if(!list.length){ el.innerHTML = "<div class='status'>No trinkets found.</div>"; return; }
+  if(!list.length){
+    el.innerHTML = "<div class='status'>No trinkets found.</div>";
+    return;
+  }
   el.innerHTML = "";
   list.forEach((t,i)=>{
     const row = document.createElement("div");
-    row.className = "tg-item"; row.dataset.index = i;
+    row.className = "tg-item";
+    row.dataset.index = i;
 
     const icon = document.createElement("div");
     icon.className = "tg-icon";
-    icon.innerHTML = `<img src="${iconForItem(t.item_id)}" alt="">`;   // <-- add image
+    icon.innerHTML = `<img src="${iconForItem(t.item_id)}" alt="">`;
 
-    const name = document.createElement("div"); name.className = "tg-name";
+    const name = document.createElement("div");
+    name.className = "tg-name";
     name.textContent = (t.name || `trinket_${t.item_id || i}`).replace(/^trinket[12]_/, "");
 
-    const meta = document.createElement("div"); meta.className = "tg-slot badge";
+    const meta = document.createElement("div");
+    meta.className = "tg-slot badge";
     meta.textContent = `${t.slot} • ${t.source}`;
 
-    const sel = document.createElement("input"); sel.type = "checkbox"; sel.className = "tg-select"; sel.checked = true;
+    const sel = document.createElement("input");
+    sel.type = "checkbox";
+    sel.className = "tg-select";
+    sel.checked = true;
 
     row.append(icon, name, meta, sel);
     el.append(row);
   });
 }
-
 
 document.getElementById("tgParse").onclick = async ()=>{
   const simc = val("tgSimc").trim();
@@ -138,18 +128,15 @@ document.getElementById("tgParse").onclick = async ()=>{
     });
     window.__tgTrinkets = data.trinkets;
 
-    // PRELOAD meta first so icons are ready when we render
+    // Preload item meta so icons/names are available before rendering
     await warmItemMetaFromTrinkets(window.__tgTrinkets);
 
-    renderTrinkets(window.__tgTrinkets);     // now icons should appear
+    renderTrinkets(window.__tgTrinkets);
     st.textContent = `Found ${data.trinkets.length} trinket(s)`;
   }catch(e){
     st.textContent = "Error: " + e.message;
   }
 };
-
-
-
 
 document.getElementById("tgSelectAll").onclick =
   ()=> document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = true);
@@ -179,10 +166,6 @@ function isEquippedPairName(name){
   const n = name || "";
   return eq.every(x => n.includes(x));
 }
-function iconForItem(/* itemId */){
-  // Placeholder; swap to a real CDN when you have an itemId->iconName map
-  return "https://wow.zamimg.com/images/wow/icons/large/inv_misc_questionmark.jpg";
-}
 function partsFromProfilesetName(name){
   // We name pairs as T_<A>__<B>
   const n = (name||"").replace(/^T_/,"");
@@ -199,7 +182,7 @@ function partsFromProfilesetName(name){
 // Build the Top-Gear-style table
 function buildTopGearTable(resultJson){
   const profiles = resultJson?.sim?.profilesets?.results
-                 || resultJson?.profilesets?.results || [];
+                || resultJson?.profilesets?.results || [];
   const baseline = baselineDpsFromJson(resultJson);
 
   // Normalize + sort (desc)
@@ -220,7 +203,7 @@ function buildTopGearTable(resultJson){
   const refIsTop = document.getElementById("tgRefTop")?.checked || false;
   const relative = document.getElementById("tgRelDps")?.checked || false;
 
-  // Reference number used for delta cells
+  // Reference number used for delta cells (equipped baseline or top)
   const ref = refIsTop ? (rows[0]?.dps ?? baseline ?? 0) : (baseline ?? 0);
 
   // **Top DPS** (used for bar widths ONLY)
@@ -299,8 +282,6 @@ function buildTopGearTable(resultJson){
   return `<div class="tg-table">${html}</div>`;
 }
 
-
-
 // Rebind toggle controls to re-render the current results
 function attachTopGearControls(){
   const rerender = ()=>{
@@ -354,6 +335,8 @@ async function runPairs(items){
           <a class="button" href="${url}" target="_blank" rel="noopener">Open HTML Report</a>
         </div>`;
       }
+
+      // ensure icons are ready for whatever pairs came out on top
       await warmItemMetaFromTrinkets(window.__tgTrinkets || []);
       set("tgResult", htmlLink + buildTopGearTable(window.__tgLast));
       attachTopGearControls();
