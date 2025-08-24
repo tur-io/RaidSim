@@ -1,22 +1,23 @@
 version: "3.9"
+# docker-compose.yml (only the worker service changed)
 services:
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
 
+# docker-compose.yml (web service only)
   web:
     build: .
-    command: bash -lc "uvicorn backend.app:app --host 0.0.0.0 --port 8000 --log-level info"
-    environment: [ "REDIS_URL=redis://redis:6379/0" ]
-    volumes: [ ".:/app" ]
+    command: ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info", "--reload"]
+    environment: ["REDIS_URL=redis://redis:6379/0"]
+    volumes: [".:/app"]
     ports: ["8000:8000"]
     depends_on: ["redis"]
 
+
   worker:
     build: .
-    command: bash -lc "rq worker -u ${REDIS_URL:-redis://redis:6379/0} simc"
-    environment: [ "REDIS_URL=redis://redis:6379/0" ]
-    volumes: [ ".:/app" ]
+    command: ["rq", "worker", "-u", "redis://redis:6379/0", "simc"]
+    environment: ["REDIS_URL=redis://redis:6379/0"]
+    volumes: [".:/app"]
     depends_on: ["redis"]
-
-

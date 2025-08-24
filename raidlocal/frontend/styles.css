@@ -9,5 +9,18 @@ button:hover{background:#1e40af}
 .result{margin-top:12px;white-space:pre-wrap}
 pre{background:#0d131c;border:1px solid #263241;border-radius:8px;padding:10px;overflow-x:auto}
 a.button{display:inline-block;margin:6px 0;color:#93c5fd}
+.row{display:flex;gap:12px;align-items:center;margin:8px 0}
+.lbl{display:block;margin:10px 0 6px;color:#c6d4e2;font-size:14px}
+.tg-list{margin-top:10px;border:1px solid #263241;border-radius:12px;padding:8px}
+.tg-item{display:grid;grid-template-columns:auto 1fr auto auto auto;gap:10px;align-items:center;
+  padding:8px;border-radius:10px}
+.tg-item + .tg-item{border-top:1px dashed #2a394b;margin-top:6px;padding-top:12px}
+.tg-icon{width:30px;height:30px;border-radius:6px;background:#222}
+.tg-name{font-weight:600}
+.tg-ilvl{font-variant-numeric:tabular-nums;color:#9fb3c8;font-size:14px}
+.tg-slot{color:#9fb3c8;font-size:12px}
+.tg-lock{cursor:pointer;user-select:none}
+.tg-select{transform:scale(1.25)}
+.badge{background:#0e1a2a;border:1px solid #27405f;border-radius:999px;padding:2px 8px;font-size:12px;color:#9fc3ff}
 
 

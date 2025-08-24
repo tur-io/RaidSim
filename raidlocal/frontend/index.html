@@ -12,14 +12,42 @@
       <div id="quickSimResult" class="result"></div>
     </section>
     <section class="card">
-      <h2>Top Gear (Profilesets)</h2>
-      <textarea id="baseProfile" placeholder="Base .simc"></textarea>
-      <textarea id="profilesets" placeholder='[{"name":"trinketA","overrides":["trinket1=id:12345"]}]'></textarea>
-      <input id="psExtraArgs" placeholder="iterations=10000,threads=8"/>
-      <button id="runTopGear">Run Profilesets</button>
-      <div id="psStatus" class="status"></div>
-      <div id="psResult" class="result"></div>
-    </section>
+      <h2>Top Gear • Trinkets</h2>
+    
+      <label class="lbl">1) Paste SimC export</label>
+      <textarea id="tgSimc" placeholder="Paste your /simc export here"></textarea>
+    
+      <div class="row">
+        <label class="lbl" style="margin:0;">
+          <input type="checkbox" id="tgIncludeEquipped" checked />
+          include equipped trinkets
+        </label>
+        <button id="tgParse">Parse Trinkets</button>
+        <span id="tgParseStatus" class="status"></span>
+      </div>
+    
+      <div class="row">
+        <button id="tgSelectAll">Select All</button>
+        <button id="tgSelectNone">Select None</button>
+      </div>
+    
+      <div id="tgList" class="tg-list"></div>
+    
+      <label class="lbl">2) Base profile (optional; defaults to your same paste)</label>
+      <textarea id="tgBase" placeholder="Leave empty to use the same paste as base"></textarea>
+    
+      <label class="lbl">3) Extra args</label>
+      <input id="tgArgs" placeholder="iterations=1500,threads=2"/>
+    
+      <div class="row">
+        <button id="tgRunPairs">Run Best Pair (Selected)</button>
+        <button id="tgRunPairsAll">Auto Best Pair (All)</button>
+        <span id="tgRunStatus" class="status"></span>
+      </div>
+    
+      <div id="tgResult" class="result"></div>
+    </section>    
+    
     </div><script src="/frontend/app.js"></script></body></html>
     
 

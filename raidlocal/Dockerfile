@@ -1,25 +1,29 @@
-# Stage 1: use official prebuilt SimulationCraft CLI
-FROM simulationcraftorg/simc:1110-2025-04-07-7c28377 AS simc
+# Stage 1: bring in the prebuilt SimulationCraft CLI
+FROM simulationcraftorg/simc:latest AS simc
 
-# Stage 2: runtime (Python + simc)
-FROM python:3.11-slim AS app
+# Stage 2: runtime (Python on Alpine + SimC)
+FROM python:3.11-alpine AS app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 WORKDIR /app
 
-# Copy simc binary from builder image
-COPY --from=simc /usr/local/bin/simc /usr/local/bin/simc
+# OS deps (Alpine/musl) + init
+RUN apk add --no-cache \
+      bash jq tini ca-certificates \
+      libstdc++ curl zlib nghttp2-libs krb5-libs libssh2
 
-# Minimal tools + init
-RUN apt-get update && apt-get install -y --no-install-recommends bash jq tini && rm -rf /var/lib/apt/lists/*
+# Copy SimC from the simc image (confirmed path)
+COPY --from=simc /app/SimulationCraft/simc /usr/local/bin/simc
+RUN chmod +x /usr/local/bin/simc \
+ && /usr/local/bin/simc 2>&1 | head -n 1 || true   # prints banner; ignore non-zero exit
 
 # Python deps
 COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --upgrade pip && pip install -r /app/backend/requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r /app/backend/requirements.txt
 
 # App source
 COPY . /app
 
 EXPOSE 8000
-ENTRYPOINT ["/usr/bin/tini","--"]
+ENTRYPOINT ["/sbin/tini","--"]
