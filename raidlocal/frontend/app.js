@@ -12,55 +12,62 @@ async function postJSON(url, data){
 // ===== item meta cache (icons/names/tooltips) =====
 const ITEM_IMG_CDN = "https://wow.zamimg.com/images/wow/icons/large/";
 const PLACEHOLDER_ICON = ITEM_IMG_CDN + "inv_misc_questionmark.jpg";
-// --- item meta cache (id -> {id,name,icon,...}) ---
+
+// in-memory cache: id -> { id, name, icon, ... }
 window.__itemMeta = window.__itemMeta || {};
 function getItemMeta(id){ return id ? window.__itemMeta[id] : null; }
 function iconForItem(id){
   const m = getItemMeta(id);
-  return (m?.icon)
-    ? `https://wow.zamimg.com/images/wow/icons/large/${m.icon}.jpg`
-    : `https://wow.zamimg.com/images/wow/icons/large/inv_misc_questionmark.jpg`;
+  return m?.icon ? `${ITEM_IMG_CDN}${m.icon}.jpg` : PLACEHOLDER_ICON;
 }
 
-// Fetch icons/names for a list of trinkets (dedup by id)
+// Fetch icons/names for a list of trinkets (dedup by id), store in __itemMeta
 async function warmItemMetaFromTrinkets(trinkets){
-  const ids = [...new Set(trinkets.map(t => t.item_id).filter(Boolean))];
+  const ids = [...new Set((trinkets || []).map(t => t.item_id).filter(Boolean))];
   if (!ids.length) return false;
+
   const res = await fetch(`/api/items?ids=${ids.join(",")}`);
   if (!res.ok) return false;
 
   const raw = await res.json();
-  const list = Array.isArray(raw) ? raw : (Array.isArray(raw.value) ? raw.value : []);
-  list.forEach(m => { window.__itemMeta[m.id] = m; });
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.value) ? raw.value : []);
+  list.forEach(m => { if (m?.id) window.__itemMeta[m.id] = m; });
   return true;
 }
 
-
-async function primeItemMetaFromTrinkets(trinkets){
-  const want = [...new Set(trinkets.map(t => t.item_id).filter(Boolean))]
-                .filter(id => !window.__itemMeta.has(id));
-  if (want.length === 0) return;
-
-  try{
-    const q = want.join(",");
-    const res = await fetch(`/api/items?ids=${encodeURIComponent(q)}`);
-    if (!res.ok) throw new Error(await res.text());
-    const arr = await res.json();
-    arr.forEach(m => window.__itemMeta.set(m.id, m));
-  }catch(err){
-    console.warn("items fetch failed", err);
+function idsFromResultJson(json){
+  const rows = json?.sim?.profilesets?.results || json?.profilesets?.results || [];
+  const ids = new Set();
+  for (const r of rows) {
+    const name = r?.name || r?.profileset || r?.profile || "";
+    (name.match(/\b\d{6}\b/g) || []).forEach(s => ids.add(parseInt(s, 10)));
   }
+  return [...ids];
 }
 
+async function warmItemMetaFromIds(ids){
+  const want = ids.filter(id => !window.__itemMeta[id]);
+  if (!want.length) return;
+  const res = await fetch(`/api/items?ids=${want.join(",")}`);
+  if (!res.ok) return;
+  const raw = await res.json();
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw.value) ? raw.value : []);
+  list.forEach(m => { if (m?.id) window.__itemMeta[m.id] = m; });
+}
 
+async function warmItemMetaFromResult(json){
+  const ids = idsFromResultJson(json);
+  await warmItemMetaFromIds(ids);
+}
 
-//------savedstate------
+// ------ saved state ------
 function saveState(){
   try {
     localStorage.setItem("tgSimc", document.getElementById("tgSimc").value);
     localStorage.setItem("tgBase", document.getElementById("tgBase").value);
     localStorage.setItem("tgArgs", document.getElementById("tgArgs").value);
-    localStorage.setItem("tgIncludeEquipped", document.getElementById("tgIncludeEquipped").checked ? "1":"0");
+    localStorage.setItem("tgIncludeEquipped",
+      document.getElementById("tgIncludeEquipped").checked ? "1" : "0");
   } catch {}
 }
 function loadState(){
@@ -102,29 +109,37 @@ function fmtDelta(n){
 // =====================================================
 function renderTrinkets(list){
   const el = document.getElementById("tgList");
-  if(!list.length){ el.innerHTML = "<div class='status'>No trinkets found.</div>"; return; }
+  if(!list.length){
+    el.innerHTML = "<div class='status'>No trinkets found.</div>";
+    return;
+  }
   el.innerHTML = "";
   list.forEach((t,i)=>{
     const row = document.createElement("div");
-    row.className = "tg-item"; row.dataset.index = i;
+    row.className = "tg-item";
+    row.dataset.index = i;
 
     const icon = document.createElement("div");
     icon.className = "tg-icon";
-    icon.innerHTML = `<img src="${iconForItem(t.item_id)}" alt="">`;   // <-- add image
+    icon.innerHTML = `<img src="${iconForItem(t.item_id)}" alt="">`;
 
-    const name = document.createElement("div"); name.className = "tg-name";
+    const name = document.createElement("div");
+    name.className = "tg-name";
     name.textContent = (t.name || `trinket_${t.item_id || i}`).replace(/^trinket[12]_/, "");
 
-    const meta = document.createElement("div"); meta.className = "tg-slot badge";
+    const meta = document.createElement("div");
+    meta.className = "tg-slot badge";
     meta.textContent = `${t.slot} • ${t.source}`;
 
-    const sel = document.createElement("input"); sel.type = "checkbox"; sel.className = "tg-select"; sel.checked = true;
+    const sel = document.createElement("input");
+    sel.type = "checkbox";
+    sel.className = "tg-select";
+    sel.checked = true;
 
     row.append(icon, name, meta, sel);
     el.append(row);
   });
 }
-
 
 document.getElementById("tgParse").onclick = async ()=>{
   const simc = val("tgSimc").trim();
@@ -138,18 +153,15 @@ document.getElementById("tgParse").onclick = async ()=>{
     });
     window.__tgTrinkets = data.trinkets;
 
-    // PRELOAD meta first so icons are ready when we render
+    // Preload item meta so icons/names are available before rendering
     await warmItemMetaFromTrinkets(window.__tgTrinkets);
 
-    renderTrinkets(window.__tgTrinkets);     // now icons should appear
+    renderTrinkets(window.__tgTrinkets);
     st.textContent = `Found ${data.trinkets.length} trinket(s)`;
   }catch(e){
     st.textContent = "Error: " + e.message;
   }
 };
-
-
-
 
 document.getElementById("tgSelectAll").onclick =
   ()=> document.querySelectorAll(".tg-item .tg-select").forEach(cb => cb.checked = true);
@@ -179,27 +191,64 @@ function isEquippedPairName(name){
   const n = name || "";
   return eq.every(x => n.includes(x));
 }
-function iconForItem(/* itemId */){
-  // Placeholder; swap to a real CDN when you have an itemId->iconName map
-  return "https://wow.zamimg.com/images/wow/icons/large/inv_misc_questionmark.jpg";
-}
+
+// --- Robust partsFromProfilesetName ---
+// 1) Prefer first two unique 6-digit IDs in the name
+// 2) If not found, scan for any known IDs (from parsed trinkets and warmed meta)
+// 3) Fallback to sanitized-name contains logic
 function partsFromProfilesetName(name){
-  // We name pairs as T_<A>__<B>
-  const n = (name||"").replace(/^T_/,"");
-  const [a,b] = n.split("__");
   const all = window.__tgTrinkets || [];
-  const find = (needle)=>{
-    const sn = sanitizeName(needle||"");
-    const hit = all.find(t => sanitizeName(t.name) === sn);
-    return { item_id: hit?.item_id || null, label: needle || "" };
-  };
-  return [find(a), find(b)];
+  const n = (name || "").replace(/^T_/,"");
+
+  // #1: direct regex for six-digit ids
+  const firstTwo = [...new Set((n.match(/\b\d{6}\b/g) || []).map(x => parseInt(x,10)))].slice(0,2);
+  if (firstTwo.length === 2){
+    const [idA,idB] = firstTwo;
+    const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
+    return [
+      { item_id: idA, label: metaA?.name || `Item ${idA}` },
+      { item_id: idB, label: metaB?.name || `Item ${idB}` }
+    ];
+  }
+
+  // #2: scan with known IDs
+  const knownIds = new Set([
+    ...((all.map(t => t.item_id).filter(Boolean)) || []),
+    ...Object.keys(window.__itemMeta || {}).map(x => parseInt(x,10))
+  ]);
+  const found = [];
+  for (const id of knownIds){
+    if (n.includes(String(id))){
+      found.push(id);
+      if (found.length === 2) break;
+    }
+  }
+  if (found.length === 2){
+    const [idA,idB] = found;
+    const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
+    return [
+      { item_id: idA, label: metaA?.name || `Item ${idA}` },
+      { item_id: idB, label: metaB?.name || `Item ${idB}` }
+    ];
+  }
+
+  // #3: fallback to sanitized-name matching
+  const hits = [];
+  for (const t of all) {
+    const sn = sanitizeName(t.name);
+    if (sn && n.includes(sn)) hits.push({ item_id: t.item_id || null, label: t.name || "" });
+    if (hits.length === 2) break;
+  }
+  if (hits.length === 2) return hits;
+
+  // last resort
+  return [{ item_id: null, label: "" }, { item_id: null, label: "" }];
 }
 
 // Build the Top-Gear-style table
 function buildTopGearTable(resultJson){
   const profiles = resultJson?.sim?.profilesets?.results
-                 || resultJson?.profilesets?.results || [];
+                || resultJson?.profilesets?.results || [];
   const baseline = baselineDpsFromJson(resultJson);
 
   // Normalize + sort (desc)
@@ -220,7 +269,7 @@ function buildTopGearTable(resultJson){
   const refIsTop = document.getElementById("tgRefTop")?.checked || false;
   const relative = document.getElementById("tgRelDps")?.checked || false;
 
-  // Reference number used for delta cells
+  // Reference number used for delta cells (equipped baseline or top)
   const ref = refIsTop ? (rows[0]?.dps ?? baseline ?? 0) : (baseline ?? 0);
 
   // **Top DPS** (used for bar widths ONLY)
@@ -270,6 +319,9 @@ function buildTopGearTable(resultJson){
     const aMeta = getItemMeta(A.item_id);
     const bMeta = getItemMeta(B.item_id);
 
+    if (!A.item_id || !aMeta) console.debug("No meta for A", row.name, A);
+    if (!B.item_id || !bMeta) console.debug("No meta for B", row.name, B);
+
     const tag = row.isTop
       ? `<span class="badge-top">Top Gear</span>`
       : (row.isEquipped ? `<span class="badge-eq">Equipped pair</span>` : "");
@@ -298,8 +350,6 @@ function buildTopGearTable(resultJson){
 
   return `<div class="tg-table">${html}</div>`;
 }
-
-
 
 // Rebind toggle controls to re-render the current results
 function attachTopGearControls(){
@@ -354,7 +404,16 @@ async function runPairs(items){
           <a class="button" href="${url}" target="_blank" rel="noopener">Open HTML Report</a>
         </div>`;
       }
+
+      // ensure icons are ready for whatever pairs came out on top
       await warmItemMetaFromTrinkets(window.__tgTrinkets || []);
+      // Also warm by scanning ids that appear only in the profileset names
+      const idsAll = new Set([
+        ...(idsFromResultJson(window.__tgLast) || []),
+        ...((window.__tgTrinkets || []).map(t => t.item_id).filter(Boolean))
+      ]);
+      await warmItemMetaFromIds([...idsAll]);
+
       set("tgResult", htmlLink + buildTopGearTable(window.__tgLast));
       attachTopGearControls();
       break;
