@@ -167,12 +167,74 @@ document.addEventListener("input", e=>{
   if(["tgSimc","tgBase","tgArgs"].includes(e.target.id)) saveState();
 });
 document.getElementById("tgIncludeEquipped").addEventListener("change", saveState);
-document.addEventListener("DOMContentLoaded", loadState);
+document.addEventListener("DOMContentLoaded", () => {
+  loadState();
+  populateSimOptions();
+});
 
 // ---------- dom helpers ----------
 function val(id){ return document.getElementById(id).value; }
 function set(id, html){ document.getElementById(id).innerHTML = html; }
 function text(id, s){ document.getElementById(id).textContent = s; }
+
+// ---------- sim options ----------
+const FIGHT_STYLE_OPTIONS = [
+  "Patchwerk",
+  "CastingPatchwerk",
+  "LightMovement",
+  "HeavyMovement",
+  "DungeonSlice",
+  "DungeonRoute",
+  "HecticAddCleave",
+  "HelterSkelter",
+  "CleaveAdd",
+  "Beastlord",
+  "Ultraxion"
+];
+
+function populateSimOptions(){
+  const fs = document.getElementById("fightStyle");
+  if(fs){
+    FIGHT_STYLE_OPTIONS.forEach(v => {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = v.replace(/([A-Z])/g,' $1').trim();
+      fs.appendChild(o);
+    });
+    fs.value = "Patchwerk";
+  }
+  const bc = document.getElementById("bossCount");
+  if(bc){
+    for(let i=1;i<=20;i++){
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = i === 1 ? "1 Boss" : `${i} Bosses`;
+      bc.appendChild(o);
+    }
+    bc.value = "1";
+  }
+  const fl = document.getElementById("fightLength");
+  if(fl){
+    for(let m=1;m<=10;m++){
+      const o = document.createElement("option");
+      o.value = String(m*60);
+      o.textContent = `${m} min`;
+      fl.appendChild(o);
+    }
+    fl.value = "300";
+  }
+}
+
+function collectSimcOptions(){
+  const opts = [];
+  const fs = document.getElementById("fightStyle");
+  if(fs && fs.value) opts.push(`fight_style=${fs.value}`);
+  const bc = document.getElementById("bossCount");
+  if(bc && bc.value) opts.push(`desired_targets=${bc.value}`);
+  const fl = document.getElementById("fightLength");
+  if(fl && fl.value) opts.push(`max_time=${fl.value}`);
+  return opts;
+}
 
 // ---------- formatting ----------
 function fmtInt(n){ return Math.round(n).toLocaleString(); }
@@ -530,11 +592,38 @@ function attachTopGearControls(){
 // =====================================================
 // ===================  Run sims  ======================
 // =====================================================
+async function runQuickSim(){
+  const st = document.getElementById("quickSimStatus");
+  const out = document.getElementById("quickSimResult");
+  const simc = val("simcInput").trim();
+  const extra = (val("extraArgs")||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const extraArgs = [...extra, ...collectSimcOptions()];
+  if(!simc){ st.textContent = "Paste SimC input first."; return; }
+  st.textContent = st.textContent || "Submitting...";
+  out.textContent = "";
+  const { job_id } = await postJSON("/api/quick-sim", { simc_input: simc, extra_args: extraArgs });
+  for(;;){
+    const jr = await (await fetch(`/api/job/${job_id}`)).json();
+    st.textContent = `Status: ${jr.status}`;
+    if(jr.status === "finished"){
+      const dps = jr.result?.json?.sim?.players?.[0]?.collected_data?.dps?.mean;
+      out.textContent = dps ? `DPS: ${fmtInt(dps)}` : JSON.stringify(jr.result?.json || {});
+      break;
+    }
+    if(jr.status === "failed"){
+      out.textContent = jr.error || "Job failed";
+      break;
+    }
+    await new Promise(r=>setTimeout(r,1500));
+  }
+}
+
 async function runPairs(items){
   const st = document.getElementById("tgRunStatus");
   const out = document.getElementById("tgResult");
   const base = (val("tgBase").trim() || val("tgSimc").trim());
   const extra = (val("tgArgs")||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const extraArgs = [...extra, ...collectSimcOptions()];
 
   // Heads-up if user selected two copies of a unique-equipped item
   try{
@@ -559,7 +648,7 @@ async function runPairs(items){
   const { job_id } = await postJSON("/api/top-gear-trinket-pairs", {
     base_profile: base,
     items,
-    extra_args: extra
+    extra_args: extraArgs
   });
 
   for(;;){
@@ -601,6 +690,7 @@ async function runPairs(items){
     await new Promise(r => setTimeout(r, 1500));
   }
 }
+document.getElementById("runQuickSim").onclick = runQuickSim;
 
 document.getElementById("tgRunPairs").onclick = async ()=>{
   const all = (window.__tgTrinkets || []);
