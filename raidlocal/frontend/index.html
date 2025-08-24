@@ -6,7 +6,7 @@
   <title>RaidLocal</title>
 
   <!-- Styles (cache-busted) -->
-  <link rel="stylesheet" href="/frontend/styles.css?v=3">
+  <link rel="stylesheet" href="/frontend/styles.css?v=4">
 </head>
 <body>
   <div class="container">
@@ -16,14 +16,20 @@
     <section class="card">
       <h2>Simulation Options</h2>
 
-      <label class="lbl">Fight Style</label>
-      <select id="fightStyle"></select>
-
-      <label class="lbl">Number of Bosses</label>
-      <select id="bossCount"></select>
-
-      <label class="lbl">Fight Length</label>
-      <select id="fightLength"></select>
+      <div class="row sim-options">
+        <div>
+          <label class="lbl">Fight Style</label>
+          <select id="fightStyle"></select>
+        </div>
+        <div>
+          <label class="lbl">Number of Bosses</label>
+          <select id="bossCount"></select>
+        </div>
+        <div>
+          <label class="lbl">Fight Length</label>
+          <select id="fightLength"></select>
+        </div>
+      </div>
 
       <label class="lbl">Raid Buffs</label>
       <div class="raid-buffs">
