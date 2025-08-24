@@ -60,18 +60,17 @@ def run_simc_from_text(simc_text: str, extra_args: Optional[List[str]] = None) -
 def generate_profilesets(base_profile: str, profiles: List[Dict]) -> str:
     lines = [base_profile.strip(), ""]
     for p in profiles:
-        name = p.get("name","noname").replace(".","_")
+        # The profileset name may contain spaces or special characters from user
+        # input. SimulationCraft expects a restricted character set, so sanitize
+        # the name before emitting it to the .simc file to prevent malformed
+        # profileset declarations.
+        name = _sanitize_name(p.get("name", "noname"))
         overrides = p.get("overrides", [])
         if not overrides: continue
         lines.append(f'profileset."{name}"={overrides[0]}')
         for opt in overrides[1:]:
             lines.append(f'profileset."{name}"+={opt}')
     return "\n".join(lines) + "\n"
-
-def _sanitize_name(s: str) -> str:
-    s = re.sub(r'[^A-Za-z0-9_]+', '_', s)
-    s = re.sub(r'_+', '_', s).strip('_')
-    return s[:64] or "item"
 
 def extract_bag_overrides(simc_text: str, slots=("trinket1","trinket2")):
     """
