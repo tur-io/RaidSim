@@ -5,11 +5,19 @@ import asyncio
 import time
 import re
 import xml.etree.ElementTree as ET
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 import httpx
 from pydantic import BaseModel
 from fastapi import APIRouter, Query
+
+def _detect_unique_equipped(text: str | None) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    # Covers: Unique-Equipped, Unique–Equipped, Unique — Equipped (various dashes)
+    return ("unique-equipped" in t) or ("unique – equipped" in t) or ("unique — equipped" in t) or ("unique –equipped" in t) or ("unique equipped" in t)
+
 
 # Router that app.py will include
 router = APIRouter()
@@ -17,15 +25,28 @@ router = APIRouter()
 # ---- Data model ----
 class ItemMeta(BaseModel):
     id: int
-    name: Optional[str] = None
-    icon: Optional[str] = None
-    quality: Optional[int] = None
-    ilvl: Optional[int] = None
-    tooltip_html: Optional[str] = None
+    name: str | None = None
+    icon: str | None = None
+    quality: int | None = None
+    ilvl: int | None = None
+    unique_equipped: bool = False
+    tooltip_html: str | None = None
 
 # ---- Tiny in-memory cache ----
 _CACHE: Dict[int, tuple[float, ItemMeta]] = {}
 _TTL = 60 * 60 * 6  # 6 hours
+
+# ---- Helpers ----
+def _is_unique_equipped(tooltip_html: Optional[str]) -> bool:
+    """
+    Best-effort detection from Wowhead tooltip HTML.
+    Handles various phrasings like 'Unique-Equipped', 'Unique-Equipped:' etc.
+    """
+    if not tooltip_html:
+        return False
+    # Normalize and search
+    s = tooltip_html.lower()
+    return "unique-equipped" in s
 
 # ---- Fetchers (best-effort; never raise) ----
 async def fetch_item_from_wowhead(item_id: int) -> Optional[ItemMeta]:
@@ -46,18 +67,20 @@ async def fetch_item_from_wowhead(item_id: int) -> Optional[ItemMeta]:
                         ilvl = j.get("ilvl") or j.get("level")
                         quality = j.get("quality") or j.get("q")
                         tip = j.get("tooltip") or j.get("tooltip_html")
+                        unique = _detect_unique_equipped(tip)
                         return ItemMeta(
                             id=item_id,
                             name=name,
                             icon=icon,
                             ilvl=int(ilvl) if isinstance(ilvl, (int, float, str)) and str(ilvl).isdigit() else None,
                             quality=int(quality) if isinstance(quality, (int, float, str)) and str(quality).isdigit() else None,
+                            unique_equipped=unique,
                             tooltip_html=tip,
                         )
                 except Exception:
                     pass
 
-            # Fallback: old XML endpoint
+            # Fallback: old XML endpoint (no tooltip here, so unique_equipped stays False)
             try:
                 r = await client.get(f"https://www.wowhead.com/item={item_id}&xml")
                 if r.status_code == 200:
@@ -72,7 +95,13 @@ async def fetch_item_from_wowhead(item_id: int) -> Optional[ItemMeta]:
                         q_match = re.search(r"q(\d+)", qual_text or "")
                         quality = int(q_match.group(1)) if q_match else None
                         ilvl = int(ilvl_text) if (ilvl_text and ilvl_text.isdigit()) else None
-                        return ItemMeta(id=item_id, name=name, icon=icon, ilvl=ilvl, quality=quality)
+                        xml_text = ET.tostring(root, encoding="unicode", method="xml")
+                        unique = _detect_unique_equipped(xml_text)
+                        return ItemMeta(
+                            id=item_id, name=name, icon=icon, ilvl=ilvl, quality=quality,
+                            unique_equipped=unique
+                        )
+
             except Exception:
                 pass
     except Exception:
@@ -88,9 +117,42 @@ async def get_item_meta(item_id: int) -> ItemMeta:
     _CACHE[item_id] = (now, meta)
     return meta
 
+async def get_items_meta_async(ids: List[int]) -> List[ItemMeta]:
+    """Async bulk helper."""
+    # Dedup, preserve order
+    seen: set[int] = set()
+    ordered = [i for i in ids if isinstance(i, int) and not (i in seen or seen.add(i))]
+    metas = await asyncio.gather(*(get_item_meta(i) for i in ordered))
+    return metas
+
+def get_items_meta(ids: List[int]) -> List[ItemMeta]:
+    """
+    Sync wrapper for codepaths that are not async (e.g., simc_runner building profilesets).
+    Uses asyncio.run() only if there is no running loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # We are already in an event loop; create a task and run with asyncio.run_until_complete is not allowed.
+        # For simplicity, just fetch one-by-one synchronously via the cache (fast on hits).
+        # If not cached, this will be slower; but simc_runner typically builds once.
+        results: List[ItemMeta] = []
+        async def _one(i: int) -> ItemMeta:
+            return await get_item_meta(i)
+        async def _all():
+            return await asyncio.gather(*(_one(i) for i in ids))
+        # Fire-and-wait by creating a new task group
+        # (If this codepath is hit inside FastAPI request handlers, prefer calling get_items_meta_async() instead.)
+        return loop.run_until_complete(_all())  # type: ignore
+    else:
+        return asyncio.run(get_items_meta_async(ids))
+
 # ---- Router endpoint (NO reference to `app` here) ----
 @router.get("/api/items", response_model=list[ItemMeta])
 async def api_items(ids: str = Query(..., description="comma-separated item IDs")):
     wanted = sorted({int(x) for x in ids.split(",") if x.strip().isdigit()})
-    results = await asyncio.gather(*(get_item_meta(i) for i in wanted))
+    results = await get_items_meta_async(wanted)
     return results

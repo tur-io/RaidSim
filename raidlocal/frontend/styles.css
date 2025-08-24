@@ -84,5 +84,9 @@ a.button{display:inline-block;margin:6px 0;color:#93c5fd}
   width: 30px; height: 30px; display:block; border-radius:6px; object-fit: cover;
 }
 
-
-
+.badge-uniq{
+  background:#2a1b0a;
+  border:1px solid #8a5a1b;
+  color:#ffc78a;
+  margin-left:6px;
+}
