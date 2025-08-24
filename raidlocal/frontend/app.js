@@ -193,17 +193,17 @@ const FIGHT_STYLE_OPTIONS = [
 ];
 
 const RAID_BUFF_OPTIONS = [
-  "bloodlust",
-  "arcane_intellect",
-  "power_word_fortitude",
-  "mark_of_the_wild",
-  "battle_shout",
-  "mystic_touch",
-  "chaos_brand",
-  "skyfury",
-  "hunters_mark",
-  "power_infusion",
-  "bleeding",
+  { id: "bloodlust", opt: "override.bloodlust" },
+  { id: "arcane_intellect", opt: "override.arcane_intellect" },
+  { id: "power_word_fortitude", opt: "override.power_word_fortitude" },
+  { id: "mark_of_the_wild", opt: "override.mark_of_the_wild" },
+  { id: "battle_shout", opt: "override.battle_shout" },
+  { id: "mystic_touch", opt: "override.mystic_touch" },
+  { id: "chaos_brand", opt: "override.chaos_brand" },
+  { id: "windfury_totem", opt: "override.windfury_totem" },
+  { id: "hunters_mark", opt: "override.hunters_mark" },
+  { id: "power_infusion", opt: "external_buffs.power_infusion" },
+  { id: "bleeding", opt: "override.bleeding" },
 ];
 
 function populateSimOptions(){
@@ -247,9 +247,9 @@ function collectSimcOptions(){
   if(bc && bc.value) opts.push(`desired_targets=${bc.value}`);
   const fl = document.getElementById("fightLength");
   if(fl && fl.value) opts.push(`max_time=${fl.value}`);
-  RAID_BUFF_OPTIONS.forEach(id => {
+  RAID_BUFF_OPTIONS.forEach(({ id, opt }) => {
     const el = document.getElementById(id);
-    if(el) opts.push(`${id}=${el.checked ? 1 : 0}`);
+    if (el) opts.push(`${opt}=${el.checked ? 1 : 0}`);
   });
   return opts;
 }
