@@ -24,6 +24,21 @@
 
       <label class="lbl">Fight Length</label>
       <select id="fightLength"></select>
+
+      <label class="lbl">Raid Buffs</label>
+      <div class="raid-buffs">
+        <label class="switch"><input type="checkbox" id="bloodlust" checked /> Bloodlust</label>
+        <label class="switch"><input type="checkbox" id="arcane_intellect" checked /> Arcane Intellect</label>
+        <label class="switch"><input type="checkbox" id="power_word_fortitude" checked /> Power Word: Fortitude</label>
+        <label class="switch"><input type="checkbox" id="mark_of_the_wild" checked /> Mark of the Wild</label>
+        <label class="switch"><input type="checkbox" id="battle_shout" checked /> Battle Shout</label>
+        <label class="switch"><input type="checkbox" id="mystic_touch" checked /> Mystic Touch (5% Physical Damage)</label>
+        <label class="switch"><input type="checkbox" id="chaos_brand" checked /> Chaos Brand (3% Magic Damage)</label>
+        <label class="switch"><input type="checkbox" id="skyfury" checked /> Skyfury</label>
+        <label class="switch"><input type="checkbox" id="hunters_mark" checked /> Hunter's Mark</label>
+        <label class="switch"><input type="checkbox" id="power_infusion" checked /> Power Infusion (Beta)</label>
+        <label class="switch"><input type="checkbox" id="bleeding" checked /> Bleeding</label>
+      </div>
     </section>
 
     <!-- Quick Sim (unchanged) -->
@@ -93,6 +108,6 @@
   </div>
 
   <!-- App (cache-busted to avoid stale JS) -->
-  <script src="/frontend/app.js?v=6"></script>
+  <script src="/frontend/app.js?v=7"></script>
 </body>
 </html>

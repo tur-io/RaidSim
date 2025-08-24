@@ -192,6 +192,20 @@ const FIGHT_STYLE_OPTIONS = [
   "Ultraxion"
 ];
 
+const RAID_BUFF_OPTIONS = [
+  "bloodlust",
+  "arcane_intellect",
+  "power_word_fortitude",
+  "mark_of_the_wild",
+  "battle_shout",
+  "mystic_touch",
+  "chaos_brand",
+  "skyfury",
+  "hunters_mark",
+  "power_infusion",
+  "bleeding",
+];
+
 function populateSimOptions(){
   const fs = document.getElementById("fightStyle");
   if(fs){
@@ -233,6 +247,10 @@ function collectSimcOptions(){
   if(bc && bc.value) opts.push(`desired_targets=${bc.value}`);
   const fl = document.getElementById("fightLength");
   if(fl && fl.value) opts.push(`max_time=${fl.value}`);
+  RAID_BUFF_OPTIONS.forEach(id => {
+    const el = document.getElementById(id);
+    if(el) opts.push(`${id}=${el.checked ? 1 : 0}`);
+  });
   return opts;
 }
 
