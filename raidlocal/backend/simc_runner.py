@@ -264,11 +264,14 @@ def make_trinket_pairs_profilesets(base_profile: str, items: list[dict]) -> str:
             if equipped_pair and pair_tails == equipped_pair:
                 continue
 
-            # Skip illegal same-ID pair when the item is Unique-Equipped
-            if a["id"] and b["id"] and a["id"] == b["id"] and (a["unique"] or b["unique"]):
+            # Skip same-ID pairs unconditionally (cannot equip two copies of the same trinket)
+            if a["id"] and b["id"] and a["id"] == b["id"]:
                 continue
 
-            pname = _sanitize_name(f"T_{a['name']}__{b['name']}")
+            # Prefer a compact, id-based profileset name so item ids are preserved
+            ida = a["id"] or 0
+            idb = b["id"] or 0
+            pname = _sanitize_name(f"T_{ida}_VS_{idb}")
             lines.append(f'profileset."{pname}"=trinket1={a["tail"]}')
             lines.append(f'profileset."{pname}"+=trinket2={b["tail"]}')
 

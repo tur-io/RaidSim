@@ -36,10 +36,65 @@ function prettyItemNameById(id, fallback = "") {
   return cleanFallbackLabel(fallback) || (id ? `Item ${id}` : "Item");
 }
 
-function pairLabel(A, B, raw = "") {
+// ===== rich item tooltip (uses Wowhead tooltip_html if present) =====
+let __tipEl = null;
+function ensureTip(){
+  if (__tipEl) return __tipEl;
+  const el = document.createElement("div");
+  el.id = "tgTooltip";
+  el.className = "tg-tooltip";
+  el.style.display = "none";
+  document.body.appendChild(el);
+  __tipEl = el;
+  return el;
+}
+function showItemTipAt(id, x, y){
+  const el = ensureTip();
+  const meta = getItemMeta(id) || {};
+  const name = meta.name || `Item ${id||""}`;
+  const body = meta.tooltip_html || "";
+  el.innerHTML = `<div class="tg-tooltip-inner">${body || name}</div>`;
+  el.style.display = "block";
+  positionTip(x, y);
+}
+function positionTip(x, y){
+  const el = ensureTip();
+  const pad = 12;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const rect = { w: el.offsetWidth, h: el.offsetHeight };
+  let left = x + pad, top = y + pad;
+  if (left + rect.w > vw - 6) left = Math.max(6, x - rect.w - pad);
+  if (top + rect.h > vh - 6) top = Math.max(6, y - rect.h - pad);
+  el.style.left = left + "px";
+  el.style.top = top + "px";
+}
+function hideItemTip(){ const el = ensureTip(); el.style.display = "none"; }
+
+function attachItemTooltips(){
+  const container = document.getElementById("tgResult");
+  if (!container) return;
+  // Remove any existing handlers by cloning
+  const clone = container.cloneNode(true);
+  container.parentNode.replaceChild(clone, container);
+  const root = clone;
+
+  root.addEventListener("mousemove", (e)=>{
+    const img = e.target.closest && e.target.closest("img.tg-item-icon");
+    if (!img) return;
+    const id = parseInt(img.getAttribute("data-item-id"), 10) || null;
+    if (!id) return;
+    // Warm meta if tooltip missing
+    const meta = getItemMeta(id);
+    if (!meta || !meta.tooltip_html){ warmItemMetaFromIds([id]).then(()=>{ showItemTipAt(id, e.clientX, e.clientY); }); }
+    showItemTipAt(id, e.clientX, e.clientY);
+  });
+  root.addEventListener("mouseleave", (e)=>{ hideItemTip(); });
+}
+
+function pairLabel(A, B) {
   // A and B are { item_id, label }
-  const a = prettyItemNameById(A.item_id, A.label || raw);
-  const b = prettyItemNameById(B.item_id, B.label || raw);
+  const a = prettyItemNameById(A.item_id, A.label);
+  const b = prettyItemNameById(B.item_id, B.label);
   return `${a} + ${b}`;
 }
 
@@ -64,6 +119,11 @@ function idsFromResultJson(json){
   for (const r of rows) {
     const name = r?.name || r?.profileset || r?.profile || "";
     (name.match(/\b\d{6}\b/g) || []).forEach(s => ids.add(parseInt(s, 10)));
+    // Also catch ids embedded in trinket segments
+    (name.match(/trinket[12]_[^_]*_(\d{6})/g) || []).forEach(seg => {
+      const m = seg.match(/(\d{6})/);
+      if (m) ids.add(parseInt(m[1], 10));
+    });
   }
   return [...ids];
 }
@@ -220,7 +280,7 @@ function isEquippedPairName(name){
 }
 
 // --- Robust partsFromProfilesetName ---
-// 0) If name is "T_<left>__<right>", split and take the LAST 6-digit id from each side
+// 0) If name is "T_<left>__<right>", try to match item names from parsed trinkets
 // 1) Otherwise: first-two-ids regex
 // 2) Otherwise: known-IDs scan
 // 3) Otherwise: sanitized-name contains
@@ -228,11 +288,22 @@ function partsFromProfilesetName(name){
   const all = window.__tgTrinkets || [];
   const raw = (name || "");
 
-  // 0) Decode our own naming: T_<left>__<right>
-  const m = /^T_(.+?)__(.+)$/.exec(raw);
+  // 0) Decode id-based naming: T_<idA>_VS_<idB>
+  let m = /^T_(\d{6})_VS_(\d{6})$/.exec(raw);
+  if (m){
+    const idA = parseInt(m[1], 10), idB = parseInt(m[2], 10);
+    const metaA = getItemMeta(idA), metaB = getItemMeta(idB);
+    return [
+      { item_id: idA, label: metaA?.name || `Item ${idA}` },
+      { item_id: idB, label: metaB?.name || `Item ${idB}` }
+    ];
+  }
+
+  // 0a) Decode our previous naming: T_<left>_VS_<right> or legacy T_<left>__<right>
+  m = /^T_(.+?)_VS_(.+)$/.exec(raw) || /^T_(.+?)__(.+)$/.exec(raw);
   if (m) {
     const pick = (s) => {
-      const idMatch = (s.match(/\d{6}(?!.*\d)/) || [])[0]; // last 6-digit token
+      const idMatch = (s.match(/\d{6}(?!.*\d)/) || [])[0];
       const id = idMatch ? parseInt(idMatch, 10) : null;
       const meta = id ? getItemMeta(id) : null;
       return { item_id: id, label: meta?.name || cleanFallbackLabel(s) };
@@ -240,6 +311,21 @@ function partsFromProfilesetName(name){
     const A = pick(m[1]);
     const B = pick(m[2]);
     return [A, B];
+  }
+
+  // 0b) Generic SimC-like names containing two segments starting with trinket1_/trinket2_
+  // Example: "T_trinket1_Soulbreaker_s_Sigil_238390_trinket2_Equipped_242394"
+  {
+    const segs = (raw.match(/trinket[12]_[A-Za-z0-9_]+/g) || []);
+    if (segs.length >= 2) {
+      const pick = (s) => {
+        const idMatch = (s.match(/\d{6}(?!.*\d)/) || [])[0];
+        const id = idMatch ? parseInt(idMatch, 10) : null;
+        const meta = id ? getItemMeta(id) : null;
+        return { item_id: id, label: meta?.name || cleanFallbackLabel(s) };
+      };
+      return [pick(segs[0]), pick(segs[1])];
+    }
   }
 
   // 1) direct "first two unique 6-digit ids" in the whole string
@@ -293,8 +379,8 @@ function buildTopGearTable(resultJson){
                 || resultJson?.profilesets?.results || [];
   const baseline = baselineDpsFromJson(resultJson);
 
-  // Normalize + sort (desc)
-  const rows = profiles.map(p=>{
+  // Normalize
+  const rowsRaw = profiles.map(p=>{
     const name = p.name || p.profileset || p.profile || "set";
     const dps  = (p.dps?.mean ?? p.collected_data?.dps?.mean ?? p.mean ?? null);
     return {
@@ -304,6 +390,23 @@ function buildTopGearTable(resultJson){
       isEquipped: isEquippedPairName(name)
     };
   }).filter(x => x.dps !== null);
+  
+  // De-duplicate by item-id pair (unordered) and drop same-id pairs defensively
+  const bestByPair = new Map();
+  for(const r of rowsRaw){
+    const [A,B] = r.items || [];
+    const idA = parseInt(A?.item_id, 10) || null;
+    const idB = parseInt(B?.item_id, 10) || null;
+    if (idA && idB && idA === idB) continue; // skip identical trinket pairs
+    const key = (idA && idB)
+      ? (idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`)
+      : sanitizeName(r.name);
+    const cur = bestByPair.get(key);
+    if (!cur || (r.dps > cur.dps)) bestByPair.set(key, r);
+  }
+  const rows = [...bestByPair.values()];
+  
+  // Sort (desc)
   rows.sort((a,b)=>b.dps - a.dps);
   if (rows.length) rows[0].isTop = true;
 
@@ -381,10 +484,10 @@ function buildTopGearTable(resultJson){
     html += `
       <div class="tg-row ${row.isTop ? "top" : ""}">
         <div class="tg-rank">${idx+1}</div>
-        <div class="tg-icon">${A.item_id?`<img src="${iconForItem(A.item_id)}" alt="" title="${titleA}">`:``}</div>
-        <div class="tg-icon">${B.item_id?`<img src="${iconForItem(B.item_id)}" alt="" title="${titleB}">`:``}</div>
-        <div class="tg-name" title="${pairLabel(A,B,row.name).replace(/"/g,'&quot;')}">
-          ${pairLabel(A,B,row.name)} ${tag}
+        <div class="tg-icon">${A.item_id?`<img class="tg-item-icon" data-item-id="${A.item_id}" src="${iconForItem(A.item_id)}" alt="" title="${titleA}">`:``}</div>
+        <div class="tg-icon">${B.item_id?`<img class="tg-item-icon" data-item-id="${B.item_id}" src="${iconForItem(B.item_id)}" alt="" title="${titleB}">`:``}</div>
+        <div class="tg-name" title="${pairLabel(A,B).replace(/"/g,'&quot;')}">
+          ${pairLabel(A,B)} ${tag}
         </div>
         <div class="tg-dps">${dpsCell}${bar(row.dps)}</div>
         <div class="tg-delta ${dCls}">${deltaCell}</div>
@@ -476,6 +579,7 @@ async function runPairs(items){
       await warmItemMetaFromIds([...idsAll]);
 
       set("tgResult", htmlLink + buildTopGearTable(window.__tgLast));
+      attachItemTooltips();
       attachTopGearControls();
       break;
     }
