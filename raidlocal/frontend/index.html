@@ -6,17 +6,53 @@
   <title>RaidLocal</title>
 
   <!-- Styles (cache-busted) -->
-  <link rel="stylesheet" href="/frontend/styles.css?v=3">
+  <link rel="stylesheet" href="/frontend/styles.css?v=4">
 </head>
 <body>
   <div class="container">
     <h1>RaidLocal</h1>
+
+    <!-- Simulation Options -->
+    <section class="card">
+      <h2>Simulation Options</h2>
+
+      <div class="row sim-options">
+        <div>
+          <label class="lbl">Fight Style</label>
+          <select id="fightStyle"></select>
+        </div>
+        <div>
+          <label class="lbl">Number of Bosses</label>
+          <select id="bossCount"></select>
+        </div>
+        <div>
+          <label class="lbl">Fight Length</label>
+          <select id="fightLength"></select>
+        </div>
+      </div>
+
+      <label class="lbl">Raid Buffs</label>
+      <div class="raid-buffs">
+        <label class="switch"><input type="checkbox" id="bloodlust" checked /> Bloodlust</label>
+        <label class="switch"><input type="checkbox" id="arcane_intellect" checked /> Arcane Intellect</label>
+        <label class="switch"><input type="checkbox" id="power_word_fortitude" checked /> Power Word: Fortitude</label>
+        <label class="switch"><input type="checkbox" id="mark_of_the_wild" checked /> Mark of the Wild</label>
+        <label class="switch"><input type="checkbox" id="battle_shout" checked /> Battle Shout</label>
+        <label class="switch"><input type="checkbox" id="mystic_touch" checked /> Mystic Touch (5% Physical Damage)</label>
+        <label class="switch"><input type="checkbox" id="chaos_brand" checked /> Chaos Brand (3% Magic Damage)</label>
+        <label class="switch"><input type="checkbox" id="windfury_totem" checked /> Windfury Totem</label>
+        <label class="switch"><input type="checkbox" id="hunters_mark" checked /> Hunter's Mark</label>
+        <label class="switch"><input type="checkbox" id="power_infusion" checked /> Power Infusion (Beta)</label>
+        <label class="switch"><input type="checkbox" id="bleeding" checked /> Bleeding</label>
+      </div>
+    </section>
 
     <!-- Quick Sim (unchanged) -->
     <section class="card">
       <h2>Quick Sim</h2>
       <textarea id="simcInput" placeholder="Paste /simc addon export or .simc profile here"></textarea>
       <input id="extraArgs" placeholder="iterations=5000,threads=8" />
+
       <button id="runQuickSim">Run Quick Sim</button>
       <div id="quickSimStatus" class="status"></div>
       <div id="quickSimResult" class="result"></div>
@@ -78,6 +114,6 @@
   </div>
 
   <!-- App (cache-busted to avoid stale JS) -->
-  <script src="/frontend/app.js?v=6"></script>
+  <script src="/frontend/app.js?v=8"></script>
 </body>
 </html>

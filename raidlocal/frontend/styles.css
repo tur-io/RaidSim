@@ -3,6 +3,7 @@ body{font-family:system-ui;background:#0b0f17;color:#e8edf2;margin:0}
 .card{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:16px;margin:18px 0}
 textarea{width:100%;height:160px;background:#0d131c;color:#e8edf2;border:1px solid #263241;border-radius:8px;padding:10px;font-family:ui-monospace,Consolas,monospace}
 input{width:100%;background:#0d131c;color:#e8edf2;border:1px solid #263241;border-radius:8px;padding:10px;margin:8px 0}
+select{width:100%;background:#0d131c;color:#e8edf2;border:1px solid #263241;border-radius:8px;padding:10px;margin:8px 0}
 button{background:#2563eb;color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
 button:hover{background:#1e40af}
 .status{margin-top:8px;font-size:14px;color:#9fb3c8}
@@ -27,6 +28,11 @@ a.button{display:inline-block;margin:6px 0;color:#93c5fd}
 .tg-controls .spacer{flex:1}
 .switch{display:flex;gap:6px;align-items:center;margin:0 6px;color:#b9c7d8;font-size:13px}
 .ghost{background:transparent;border:1px solid #314357;color:#b9c7d8}
+
+.row.sim-options>div{flex:1}
+.raid-buffs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 12px;margin:4px 0}
+.raid-buffs .switch{margin:0;align-items:flex-start}
+.raid-buffs .switch input{margin-top:2px}
 
 /* Result table shell */
 .tg-table{border:1px solid #263241;border-radius:12px;overflow:hidden;margin-top:8px}
