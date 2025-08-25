@@ -31,7 +31,8 @@ a.button{display:inline-block;margin:6px 0;color:#93c5fd}
 
 .row.sim-options>div{flex:1}
 .raid-buffs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 12px;margin:4px 0}
-.raid-buffs .switch{margin:0}
+.raid-buffs .switch{margin:0;align-items:flex-start}
+.raid-buffs .switch input{margin-top:2px}
 
 /* Result table shell */
 .tg-table{border:1px solid #263241;border-radius:12px;overflow:hidden;margin-top:8px}

@@ -200,7 +200,7 @@ const RAID_BUFF_OPTIONS = [
   { id: "battle_shout", opt: "override.battle_shout" },
   { id: "mystic_touch", opt: "override.mystic_touch" },
   { id: "chaos_brand", opt: "override.chaos_brand" },
-  { id: "windfury_totem", opt: "override.windfury" },
+  { id: "windfury_totem", opt: "override.windfury_totem" },
   { id: "hunters_mark", opt: "override.hunters_mark" },
   { id: "power_infusion", opt: "external_buffs.power_infusion" },
   { id: "bleeding", opt: "override.bleeding" },
