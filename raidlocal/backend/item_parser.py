@@ -136,17 +136,20 @@ def get_items_meta(ids: List[int]) -> List[ItemMeta]:
         loop = None
 
     if loop and loop.is_running():
-        # We are already in an event loop; create a task and run with asyncio.run_until_complete is not allowed.
-        # For simplicity, just fetch one-by-one synchronously via the cache (fast on hits).
-        # If not cached, this will be slower; but simc_runner typically builds once.
-        results: List[ItemMeta] = []
-        async def _one(i: int) -> ItemMeta:
-            return await get_item_meta(i)
-        async def _all():
-            return await asyncio.gather(*(_one(i) for i in ids))
-        # Fire-and-wait by creating a new task group
-        # (If this codepath is hit inside FastAPI request handlers, prefer calling get_items_meta_async() instead.)
-        return loop.run_until_complete(_all())  # type: ignore
+        # When called from an async context we cannot block the running loop.
+        # Run the async helper in a separate thread with its own event loop.
+        import threading
+
+        result: List[ItemMeta] = []
+
+        def runner() -> None:
+            nonlocal result
+            result = asyncio.run(get_items_meta_async(ids))
+
+        t = threading.Thread(target=runner)
+        t.start()
+        t.join()
+        return result
     else:
         return asyncio.run(get_items_meta_async(ids))
 
